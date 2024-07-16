@@ -1,4 +1,4 @@
-# XFER - XMODEM File Transfer Utility
+# XFER - XMODEM File Transfer Server for Old Computers
 
 ## Overview
 
@@ -11,7 +11,7 @@ XFER is such a program: run it on your computer, connect from your retro compute
 - Easy: download one file and run it
 - Allows browsing of the host file system
 - File transfer using XMODEM protocol (very slow but also very compatible)
-- Cross-platform support (Windows, macOS, Linux)
+- Binaries available for macOS and Linux
 
 ## How to get it
 
@@ -33,7 +33,7 @@ Options:
 
 ## Usage
 
-### 1. Start xfer on your "modern" computer:
+### 1. Start XFER on your "modern" computer:
 
 ```
 $ bin/osx/xfer
@@ -60,3 +60,14 @@ Please start your XMODEM receiver NOW.
 ... and start the download on your terminal program. Alternatively you can browse the host computer's directories (unless you start the xfer with "secure mode" which allows you to only browser the directory from which the xfer was started from)
 
 ### 3. That's it!
+
+# Running from source
+
+Don't want to download binaries? If you have development tools on your computer, just do:
+
+```
+$ git clone https://github.com/arttu76/xfer
+$ cd xfer
+$ npm install
+$ npm run start
+```

@@ -1,19 +1,17 @@
 {
   "name": "xfer",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "XMODEM server for old computers",
   "scripts": {
     "dev": "ts-node-dev server.ts",
     "start": "ts-node server.ts",
-    "prepare": "mkdir -p js && tsc && mkdir -p bin",
-    "buildBinary:win": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-win.exe -n ^20.0.0",
-    "buildBinary:osx": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-osx -n ^20.0.0",
-    "buildBinary:linux": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-linux -n ^20.0.0"
+    "prepareBinaryBuild": "mkdir -p js && tsc && mkdir -p bin",
+    "buildBinary:osx": "npm run prepareBinaryBuild && boxednode --source ./js/server.js --target bin/xfer-osx -n ^20.0.0",
+    "buildBinary:linux": "npm run prepareBinaryBuild && boxednode --source ./js/server.js --target bin/xfer-linux -n ^20.0.0"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [ "retrogaming", "xmodem", "serial", "wifi modem" ],
+  "author": "arttu@solvalou.com",
+  "license": "WTFPL",
   "dependencies": {
     "commander": "^12.1.0",
     "fs": "^0.0.1-security",
