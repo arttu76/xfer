@@ -18,7 +18,7 @@ XFER is such a program: run it on your computer, connect from your retro compute
 [Download the suitable executable for your operating system from the releases page](https://github.com/arttu76/xfer/releases) and save it on your hard drive. When running xfer, you probably don't need to change any options, but you can use the -h command line switch to see what options are available:
 
 ```
-$ bin/osx/xfer -h
+$ xfer -h
 Usage: xfer [options]
 
 Start Xmodem on your computer to allow old computers to download files with wifi modem devices.

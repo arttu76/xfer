@@ -62,14 +62,14 @@ type Context = {
 }
 
 const log = (txt: string): void => console.log(`${new Date()} ${txt}`);
-const write = (ctx: Context, txt: string): void => { ctx.socket.write(`${txt}`); }
+const write = (ctx: Context, txt: string): void => { ctx.socket.write(txt); }
 const writeln = (ctx: Context, txt: string = ""): void => write(ctx, `${txt}\n\r`);
 
 const isInRoot = (ctx: Context): boolean => ctx.path === path.parse(ctx.path).root;
 const getAbsoluteFilePath = (ctx: Context, fileName: string): string => path.join(ctx.path, fileName);
 const getFiles = (ctx: Context): string[] => {
   const files = fs.readdirSync(ctx.path).filter((file) => {
-    if ( file.startsWith('.') ) {
+    if (file.startsWith('.')) {
       return false;
     }
     if (secureMode && isDirectory(ctx, file)) {
@@ -78,7 +78,9 @@ const getFiles = (ctx: Context): string[] => {
     return true;
   });
   const showParentDirectory = !isInRoot(ctx) && !secureMode;
-  return showParentDirectory ? ['..', ...files]: files;
+  return showParentDirectory
+    ? ['..', ...files]
+    : files;
 }
 const isDirectory = (ctx: Context, filePath: string): boolean => {
   const absolutePath = getAbsoluteFilePath(ctx, filePath);
@@ -273,10 +275,9 @@ function getServerIpAddress() {
       }
     }
   }
-  return 'localhost'; // Fallback to localhost if no suitable IP is found
+  return 'localhost';
 }
 
 server.listen(port, () => {
-  const ipAddress = getServerIpAddress();
-  log(`Server now listening on ${ipAddress}:${port}`);
+  log(`Server now listening in ${getServerIpAddress()}:${port}`);
 });
