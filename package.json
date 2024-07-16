@@ -6,12 +6,10 @@
   "scripts": {
     "dev": "ts-node-dev server.ts",
     "start": "ts-node server.ts",
-    "compileToJs": "tsc",
-    "makeExecutableDirs": "mkdir -p bin/win && mkdir -p bin/osx && mkdir -p bin/linux",
-    "prepareBuild": "npm run compileToJs && npm run makeExecutableDirs",
-    "buildBinary:win": "npm run prepareBuild && boxednode --source ./js/server.js --target bin/win/xfer.exe -n ^20.0.0",
-    "buildBinary:osx": "npm run prepareBuild && boxednode --source ./js/server.js --target bin/osx/xfer -n ^20.0.0",
-    "buildBinary:linux": "npm run prepareBuild && boxednode --source ./js/server.js --target bin/linux/xfer -n ^20.0.0"
+    "prepare": "mkdir -p js && tsc && mkdir -p bin",
+    "buildBinary:win": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-win.exe -n ^20.0.0",
+    "buildBinary:osx": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-osx -n ^20.0.0",
+    "buildBinary:linux": "npm run prepare && boxednode --source ./js/server.js --target bin/xfer-linux -n ^20.0.0"
   },
   "keywords": [],
   "author": "",
