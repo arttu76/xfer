@@ -2,7 +2,7 @@
 
 ## Overview
 
-If you have a wifi modem for old computer (such as [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)), you might need a software to be run on a modern "host" computer that allows the old computer browse and download files from the "host" computer.
+If you have a wifi modem for an old computer (such as [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)), you might need a software to be run on a modern "host" computer that allows the old computer browse and download files from the "host" computer.
 
 XFER is such a program: run it on your computer, connect from your retro computer's terminal program and download any files you like.
 
@@ -37,7 +37,7 @@ Options:
   -h, --help                display help for command
 ```
 
-...but most of time time just can just start it without any options:
+...but most of time time ypu can just start it without any options:
 
 ```
 $ xfer
@@ -65,7 +65,7 @@ Please start your XMODEM receiver NOW.
 
 ... and start the download on your terminal program.
 
-You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browser the directory from which the xfer was started from)
+You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browse files and not to move to another directory)
 
 ### 3. That's it!
 
