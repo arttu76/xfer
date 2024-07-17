@@ -11,7 +11,7 @@ XFER is such a program: run it on your computer, connect from your retro compute
 - Easy: download one file and run it
 - Allows browsing of the host file system
 - File transfer using XMODEM protocol (very slow but also very compatible)
-- Binaries available for macOS and Linux
+- Binaries available for Windows, macOS and Linux
 
 ## How to get it
 
