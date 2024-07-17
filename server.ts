@@ -246,7 +246,6 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
   });
 
   x.on('stop', (exitCode: number) => {
-    console.log("stop");
     writeln(ctx);
     writeln(ctx);
     if (exitCode === 0) {
