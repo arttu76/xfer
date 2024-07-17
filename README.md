@@ -15,7 +15,13 @@ XFER is such a program: run it on your computer, connect from your retro compute
 
 ## How to get it
 
-[Download the suitable executable for your operating system from the releases page](https://github.com/arttu76/xfer/releases) and save it on your hard drive. When running xfer, you probably don't need to change any options, but you can use the -h command line switch to see what options are available:
+[Download the suitable executable for your operating system from the releases page](https://github.com/arttu76/xfer/releases) and save it on your hard drive.
+
+## Usage
+
+### 1. Start XFER on your "modern" computer:
+
+When running xfer, you probably don't need to change any options, but you can use the -h command line switch to see what options are available:
 
 ```
 $ xfer -h
@@ -31,16 +37,16 @@ Options:
   -h, --help                display help for command
 ```
 
-## Usage
-
-### 1. Start XFER on your "modern" computer:
+...but most of time time just can just start it without any options:
 
 ```
-$ bin/osx/xfer
+$ xfer
 Tue Jul 16 2024 11:51:10 GMT+0300 Server now listening on 192.168.1.194:23
 ```
 
 ### 2. On your "retro" computer, use terminal to connect:
+
+We're using the Hayes AT command to "dial" into the host computer's IP and port:
 
 ```
 ATDT192.168.1.194:23
@@ -57,9 +63,13 @@ Initiating XMODEM transfer for /Users/arttu/games/mule.prg
 Please start your XMODEM receiver NOW.
 ```
 
-... and start the download on your terminal program. Alternatively you can browse the host computer's directories (unless you start the xfer with "secure mode" which allows you to only browser the directory from which the xfer was started from)
+... and start the download on your terminal program.
+
+You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browser the directory from which the xfer was started from)
 
 ### 3. That's it!
+
+Enjoy!
 
 # Running from source
 
@@ -68,6 +78,5 @@ Don't want to download binaries? If you have development tools on your computer,
 ```
 $ git clone https://github.com/arttu76/xfer
 $ cd xfer
-$ npm install
 $ npm run start
 ```
