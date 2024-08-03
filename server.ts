@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('xfer')
-  .description('Start Xmodem on your computer to allow (retro?) computers to download files with devices like WiModem232.')
+  .description('Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.')
   .version('1.0.1');
 
 program

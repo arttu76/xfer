@@ -27,7 +27,7 @@ When running xfer, you probably don't need to change any options, but you can us
 $ xfer -h
 Usage: xfer [options]
 
-Start Xmodem on your computer to allow old computers to download files with wifi modem devices.
+Start XFER on your computer to allow old computers to download files with wifi modem devices.
 
 Options:
   -V, --version             output the version number
