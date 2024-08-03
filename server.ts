@@ -10,7 +10,7 @@ const program = new Command();
 program
   .name('xfer')
   .description('Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.')
-  .version('1.0.1');
+  .version('1.0.2');
 
 program
   .option('-p, --port <number>', 'port to use', (value: string): number => {

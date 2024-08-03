@@ -1,12 +1,12 @@
 {
   "name": "xfer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "XMODEM server for old computers",
   "scripts": {
     "dev": "ts-node-dev server.ts",
     "start": "npm install && ts-node server.ts",
-    "compileToJs": "mkdir -p js && rm js/* && tsc",
-    "generateBinaries": "mkdir -p bin && rm bin/* && pkg js/server.js --targets latest-linux-x64,latest-macos-x64,latest-win-x64 --out-path bin/",
+    "compileToJs": "mkdir -p js && rm -f js/* && tsc",
+    "generateBinaries": "mkdir -p bin && rm -f bin/* && pkg js/server.js --targets latest-linux-x64,latest-macos-x64,latest-win-x64 --out-path bin/",
     "renameBinaries": "mv bin/server-linux bin/xfer-linux && mv bin/server-macos bin/xfer-macos && mv bin/server-win.exe bin/xfer-win.exe",
     "buildBinaries": "npm run compileToJs && npm run generateBinaries && npm run renameBinaries"
   },
