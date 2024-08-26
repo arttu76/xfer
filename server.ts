@@ -2,40 +2,52 @@ import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { Xmodem } from 'xmodem.ts'
+import { Xmodem } from 'xmodem.ts';
 import { Command, InvalidArgumentError } from 'commander';
 
 const program = new Command();
 
 program
   .name('xfer')
-  .description('Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.')
-  .version('1.0.2');
+  .description(
+    'Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.'
+  )
+  .version('1.0.3');
 
 program
-  .option('-p, --port <number>', 'port to use', (value: string): number => {
-    const port = parseInt(value, 10);
-    if (isNaN(port)) {
-      throw new InvalidArgumentError('Not a number.');
-    }
-    if (port < 0 || port > 65535) {
-      throw new InvalidArgumentError('Port must be between 0 and 65535.');
-    }
-    return port;
-  }, 23)
-  .option('-d, --directory <string>', 'directory to serve', (value: string): string => {
-    const errorMessage = `${value} is not a valid directory.`;
-    try {
-      const resolvedPath = path.resolve(value);
-      if (!fs.statSync(resolvedPath).isDirectory()) {
+  .option(
+    '-p, --port <number>',
+    'port to use',
+    (value: string): number => {
+      const port = parseInt(value, 10);
+      if (isNaN(port)) {
+        throw new InvalidArgumentError('Not a number.');
+      }
+      if (port < 0 || port > 65535) {
+        throw new InvalidArgumentError('Port must be between 0 and 65535.');
+      }
+      return port;
+    },
+    23
+  )
+  .option(
+    '-d, --directory <string>',
+    'directory to serve',
+    (value: string): string => {
+      const errorMessage = `${value} is not a valid directory.`;
+      try {
+        const resolvedPath = path.resolve(value);
+        if (!fs.statSync(resolvedPath).isDirectory()) {
+          throw new InvalidArgumentError(errorMessage);
+        }
+      } catch (error) {
         throw new InvalidArgumentError(errorMessage);
       }
-    } catch (error) {
-      throw new InvalidArgumentError(errorMessage);
-    }
-    return value;
-  }, process.cwd())
-  .option('-s, --secure', 'secure mode: don\'t allow user to change directories')
+      return value;
+    },
+    process.cwd()
+  )
+  .option('-s, --secure', "secure mode: don't allow user to change directories")
   .parse(process.argv);
 
 const options = program.opts();
@@ -47,26 +59,31 @@ const secureMode = !!options.secure;
 enum Mode {
   NavigateFiles,
   ConfirmTransfer,
-  TransferFile
+  TransferFile,
 }
 
 type Context = {
-  mode: Mode,
-  path: string,
+  mode: Mode;
+  path: string;
   socket: net.Socket;
   requestedFile?: string;
   totalBlocks: number;
   transferredBlocks: number;
   transferStartedAt: number;
   lastLoggedAt: number;
-}
+};
 
 const log = (txt: string): void => console.log(`${new Date()} ${txt}`);
-const write = (ctx: Context, txt: string): void => { ctx.socket.write(txt); }
-const writeln = (ctx: Context, txt: string = ""): void => write(ctx, `${txt}\n\r`);
+const write = (ctx: Context, txt: string): void => {
+  ctx.socket.write(txt);
+};
+const writeln = (ctx: Context, txt: string = ''): void =>
+  write(ctx, `${txt}\n\r`);
 
-const isInRoot = (ctx: Context): boolean => ctx.path === path.parse(ctx.path).root;
-const getAbsoluteFilePath = (ctx: Context, fileName: string): string => path.join(ctx.path, fileName);
+const isInRoot = (ctx: Context): boolean =>
+  ctx.path === path.parse(ctx.path).root;
+const getAbsoluteFilePath = (ctx: Context, fileName: string): string =>
+  path.join(ctx.path, fileName);
 const getFiles = (ctx: Context): string[] => {
   const files = fs.readdirSync(ctx.path).filter((file) => {
     if (file.startsWith('.')) {
@@ -78,20 +95,17 @@ const getFiles = (ctx: Context): string[] => {
     return true;
   });
   const showParentDirectory = !isInRoot(ctx) && !secureMode;
-  return showParentDirectory
-    ? ['..', ...files]
-    : files;
-}
+  return showParentDirectory ? ['..', ...files] : files;
+};
 const isDirectory = (ctx: Context, filePath: string): boolean => {
   const absolutePath = getAbsoluteFilePath(ctx, filePath);
   const stat = fs.lstatSync(absolutePath);
   return stat.isSymbolicLink()
     ? fs.statSync(fs.realpathSync(absolutePath)).isDirectory()
     : stat.isDirectory();
-}
+};
 
 const server = net.createServer((socket) => {
-
   const ctx: Context = {
     mode: Mode.NavigateFiles,
     path: initialPath,
@@ -99,8 +113,10 @@ const server = net.createServer((socket) => {
     totalBlocks: 0,
     transferredBlocks: 0,
     transferStartedAt: 0,
-    lastLoggedAt: 0
+    lastLoggedAt: 0,
   };
+
+  let inputBuffer = '';
 
   log('Client connected');
 
@@ -108,23 +124,38 @@ const server = net.createServer((socket) => {
 
   socket.on('data', (data) => {
     if (ctx.mode === Mode.NavigateFiles) {
-      const input = data.toString().trim();
+      const input = data.toString();
       if (input.length === 0) {
         return;
       }
       if (input.trim().toLowerCase().startsWith('x')) {
-        writeln(ctx, "Goodbye!");
+        writeln(ctx, 'Goodbye!');
         socket.end();
         return;
       }
       if (input.trim().toLowerCase().startsWith('r')) {
-        writeln(ctx, "Refreshing...");
+        writeln(ctx, 'Refreshing...');
         listFiles(ctx);
         return;
       }
 
-      writeln(ctx, input);
-      selectFile(ctx, input);
+      for (let i = 0; i < input.length; i++) {
+        const char = input[i];
+        if (char === '\r' || char === '\n') {
+          writeln(ctx);
+          selectFile(ctx, parseInt(inputBuffer, 10));
+          inputBuffer = '';
+          break;
+        } else if (inputBuffer.length && (char === '\b' || char === '\x7f')) {
+          inputBuffer = inputBuffer.slice(0, -1);
+          ctx.socket.write('\b \b');
+        } else if (/[0-9\r\n\b]/.test(char)) {
+          console.log('adding ' + char + ' to buffer');
+          inputBuffer += char;
+          ctx.socket.write(char);
+        }
+      }
+
       return;
     }
 
@@ -132,18 +163,16 @@ const server = net.createServer((socket) => {
       confirmAndStartXModemTransfer(ctx, data.toString());
       return;
     }
-
   });
 
   socket.on('end', () => {
     socket.destroy();
-    log("Client disconnected");
+    log('Client disconnected');
   });
 });
 
 function listFiles(ctx: Context) {
-
-  const DIRECTORY_PREFIX = "<D>";
+  const DIRECTORY_PREFIX = '<D>';
   const FILE_PREFIX = DIRECTORY_PREFIX.replace(/./g, '.');
 
   writeln(ctx, `----- ${ctx.path} -----`);
@@ -153,9 +182,9 @@ function listFiles(ctx: Context) {
     const files = getFiles(ctx);
     files.forEach((file, index) => {
       write(ctx, `${index + 1}`);
-      write(ctx, " ");
+      write(ctx, ' ');
       write(ctx, isDirectory(ctx, file) ? DIRECTORY_PREFIX : FILE_PREFIX);
-      write(ctx, " ");
+      write(ctx, ' ');
       writeln(ctx, file);
     });
     write(ctx, `Enter 1-${files.length}, R=refresh, X=exit: `);
@@ -165,11 +194,13 @@ function listFiles(ctx: Context) {
   }
 }
 
-function selectFile(ctx: Context, input: string) {
-  const fileNumber = parseInt(input);
+function selectFile(ctx: Context, fileNumber: number) {
   const filesOrDirs = getFiles(ctx);
   if (isNaN(fileNumber) || fileNumber < 1 || fileNumber > filesOrDirs.length) {
-    writeln(ctx, `Invalid selection. Enter a number between 1-${filesOrDirs.length}.`);
+    writeln(
+      ctx,
+      `Invalid selection. Enter a number between 1-${filesOrDirs.length}.`
+    );
     listFiles(ctx);
     return;
   }
@@ -192,12 +223,12 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
 
   const sanitizedInput = (input || '').trim().toLowerCase();
   if (sanitizedInput.length > 0 && !sanitizedInput.startsWith('y')) {
-    writeln(ctx, "No");
+    writeln(ctx, 'No');
     listFiles(ctx);
     return;
   }
 
-  writeln(ctx, "Yes");
+  writeln(ctx, 'Yes');
   writeln(ctx);
 
   writeln(ctx, `Initiating XMODEM transfer for ${ctx.requestedFile}`);
@@ -211,23 +242,23 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
 
   x.on('ready', (packagedBufferLength: number) => {
     log('Waiting for client to start XMODEM protocol...');
-    ctx.totalBlocks = packagedBufferLength
+    ctx.totalBlocks = packagedBufferLength;
   });
 
   x.on('start', () => {
-    ctx.transferStartedAt = Date.now()
+    ctx.transferStartedAt = Date.now();
     ctx.lastLoggedAt = ctx.transferStartedAt;
     ctx.transferredBlocks = 0;
     log(`Transfer started for ${ctx.requestedFile}`);
   });
 
-  x.on('status', (statusObj: { signal: string, block: number }) => {
+  x.on('status', (statusObj: { signal: string; block: number }) => {
     const now = Date.now();
     if (now - ctx.lastLoggedAt < 5000) {
       return;
     }
 
-    if (statusObj.signal !== "SOH") {
+    if (statusObj.signal !== 'SOH') {
       return;
     }
 
@@ -235,11 +266,21 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
     const blocksRemaining = ctx.totalBlocks - transferredBlocks;
     const elapsedMilliseconds = now - ctx.transferStartedAt;
     const millisecondsForBlock = elapsedMilliseconds / transferredBlocks;
-    const secondsRemaining = Math.round(blocksRemaining * millisecondsForBlock / 1000);
+    const secondsRemaining = Math.round(
+      (blocksRemaining * millisecondsForBlock) / 1000
+    );
     const minutesLeft = Math.floor(secondsRemaining / 60);
     const secondsLeft = secondsRemaining % 60;
-    const bytesPerSecond = Math.round(transferredBlocks * 128 / (elapsedMilliseconds / 1000));
-    log(`Transferred ${transferredBlocks} of ${ctx.totalBlocks} blocks - ${bytesPerSecond}B/sec - ETA: ${minutesLeft ? minutesLeft + 'min ' : ''}${secondsLeft}sec`);
+    const bytesPerSecond = Math.round(
+      (transferredBlocks * 128) / (elapsedMilliseconds / 1000)
+    );
+    log(
+      `Transferred ${transferredBlocks} of ${
+        ctx.totalBlocks
+      } blocks - ${bytesPerSecond}B/sec - ETA: ${
+        minutesLeft ? minutesLeft + 'min ' : ''
+      }${secondsLeft}sec`
+    );
 
     ctx.transferredBlocks = transferredBlocks;
     ctx.lastLoggedAt = now;
