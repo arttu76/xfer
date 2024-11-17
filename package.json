@@ -1,6 +1,6 @@
 {
   "name": "xfer",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "XMODEM server for old computers",
   "scripts": {
     "dev": "ts-node-dev server.ts",

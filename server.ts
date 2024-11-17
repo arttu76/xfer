@@ -1,38 +1,38 @@
-import * as net from 'net';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { Xmodem } from 'xmodem.ts';
-import { Command, InvalidArgumentError } from 'commander';
+import * as net from "net";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import { Xmodem } from "xmodem.ts";
+import { Command, InvalidArgumentError } from "commander";
 
 const program = new Command();
 
 program
-  .name('xfer')
+  .name("xfer")
   .description(
-    'Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.'
+    "Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232."
   )
-  .version('1.0.3');
+  .version("1.0.4");
 
 program
   .option(
-    '-p, --port <number>',
-    'port to use',
+    "-p, --port <number>",
+    "port to use",
     (value: string): number => {
       const port = parseInt(value, 10);
       if (isNaN(port)) {
-        throw new InvalidArgumentError('Not a number.');
+        throw new InvalidArgumentError("Not a number.");
       }
       if (port < 0 || port > 65535) {
-        throw new InvalidArgumentError('Port must be between 0 and 65535.');
+        throw new InvalidArgumentError("Port must be between 0 and 65535.");
       }
       return port;
     },
     23
   )
   .option(
-    '-d, --directory <string>',
-    'directory to serve',
+    "-d, --directory <string>",
+    "directory to serve",
     (value: string): string => {
       const errorMessage = `${value} is not a valid directory.`;
       try {
@@ -47,7 +47,7 @@ program
     },
     process.cwd()
   )
-  .option('-s, --secure', "secure mode: don't allow user to change directories")
+  .option("-s, --secure", "secure mode: don't allow user to change directories")
   .parse(process.argv);
 
 const options = program.opts();
@@ -77,7 +77,7 @@ const log = (txt: string): void => console.log(`${new Date()} ${txt}`);
 const write = (ctx: Context, txt: string): void => {
   ctx.socket.write(txt);
 };
-const writeln = (ctx: Context, txt: string = ''): void =>
+const writeln = (ctx: Context, txt: string = ""): void =>
   write(ctx, `${txt}\n\r`);
 
 const isInRoot = (ctx: Context): boolean =>
@@ -86,7 +86,7 @@ const getAbsoluteFilePath = (ctx: Context, fileName: string): string =>
   path.join(ctx.path, fileName);
 const getFiles = (ctx: Context): string[] => {
   const files = fs.readdirSync(ctx.path).filter((file) => {
-    if (file.startsWith('.')) {
+    if (file.startsWith(".")) {
       return false;
     }
     if (secureMode && isDirectory(ctx, file)) {
@@ -95,7 +95,7 @@ const getFiles = (ctx: Context): string[] => {
     return true;
   });
   const showParentDirectory = !isInRoot(ctx) && !secureMode;
-  return showParentDirectory ? ['..', ...files] : files;
+  return showParentDirectory ? ["..", ...files] : files;
 };
 const isDirectory = (ctx: Context, filePath: string): boolean => {
   const absolutePath = getAbsoluteFilePath(ctx, filePath);
@@ -116,41 +116,41 @@ const server = net.createServer((socket) => {
     lastLoggedAt: 0,
   };
 
-  let inputBuffer = '';
+  let inputBuffer = "";
 
-  log('Client connected');
+  log("Client connected");
 
   listFiles(ctx);
 
-  socket.on('data', (data) => {
+  socket.on("data", (data) => {
     if (ctx.mode === Mode.NavigateFiles) {
       const input = data.toString();
       if (input.length === 0) {
         return;
       }
-      if (input.trim().toLowerCase().startsWith('x')) {
-        writeln(ctx, 'Goodbye!');
+      if (input.trim().toLowerCase().startsWith("x")) {
+        writeln(ctx, "Goodbye!");
         socket.end();
         return;
       }
-      if (input.trim().toLowerCase().startsWith('r')) {
-        writeln(ctx, 'Refreshing...');
+      if (input.trim().toLowerCase().startsWith("r")) {
+        writeln(ctx, "Refreshing...");
         listFiles(ctx);
         return;
       }
 
       for (let i = 0; i < input.length; i++) {
         const char = input[i];
-        if (char === '\r' || char === '\n') {
+        if (char === "\r" || char === "\n") {
           writeln(ctx);
           selectFile(ctx, parseInt(inputBuffer, 10));
-          inputBuffer = '';
+          inputBuffer = "";
           break;
-        } else if (inputBuffer.length && (char === '\b' || char === '\x7f')) {
+        } else if (inputBuffer.length && (char === "\b" || char === "\x7f")) {
           inputBuffer = inputBuffer.slice(0, -1);
-          ctx.socket.write('\b \b');
+          ctx.socket.write("\b \b");
         } else if (/[0-9\r\n\b]/.test(char)) {
-          console.log('adding ' + char + ' to buffer');
+          console.log("adding " + char + " to buffer");
           inputBuffer += char;
           ctx.socket.write(char);
         }
@@ -165,15 +165,15 @@ const server = net.createServer((socket) => {
     }
   });
 
-  socket.on('end', () => {
+  socket.on("end", () => {
     socket.destroy();
-    log('Client disconnected');
+    log("Client disconnected");
   });
 });
 
 function listFiles(ctx: Context) {
-  const DIRECTORY_PREFIX = '<D>';
-  const FILE_PREFIX = DIRECTORY_PREFIX.replace(/./g, '.');
+  const DIRECTORY_PREFIX = "<D>";
+  const FILE_PREFIX = DIRECTORY_PREFIX.replace(/./g, ".");
 
   writeln(ctx, `----- ${ctx.path} -----`);
 
@@ -182,9 +182,9 @@ function listFiles(ctx: Context) {
     const files = getFiles(ctx);
     files.forEach((file, index) => {
       write(ctx, `${index + 1}`);
-      write(ctx, ' ');
+      write(ctx, " ");
       write(ctx, isDirectory(ctx, file) ? DIRECTORY_PREFIX : FILE_PREFIX);
-      write(ctx, ' ');
+      write(ctx, " ");
       writeln(ctx, file);
     });
     write(ctx, `Enter 1-${files.length}, R=refresh, X=exit: `);
@@ -221,44 +221,44 @@ function selectFile(ctx: Context, fileNumber: number) {
 function confirmAndStartXModemTransfer(ctx: Context, input: string) {
   ctx.mode = Mode.TransferFile;
 
-  const sanitizedInput = (input || '').trim().toLowerCase();
-  if (sanitizedInput.length > 0 && !sanitizedInput.startsWith('y')) {
-    writeln(ctx, 'No');
+  const sanitizedInput = (input || "").trim().toLowerCase();
+  if (sanitizedInput.length > 0 && !sanitizedInput.startsWith("y")) {
+    writeln(ctx, "No");
     listFiles(ctx);
     return;
   }
 
-  writeln(ctx, 'Yes');
+  writeln(ctx, "Yes");
   writeln(ctx);
 
-  writeln(ctx, `Initiating XMODEM transfer for ${ctx.requestedFile}`);
-  writeln(ctx, 'Please start your XMODEM receiver NOW.');
-
   const filePath = ctx.requestedFile!;
-
   const buffer = fs.readFileSync(filePath);
+  const blocks = Math.ceil(buffer.length / 128);
+
+  writeln(ctx, `Initiating XMODEM transfer for ${ctx.requestedFile}`);
+  writeln(ctx, `Please start your XMODEM receiver NOW for ${blocks} blocks.`);
 
   const x = new Xmodem(filePath);
 
-  x.on('ready', (packagedBufferLength: number) => {
-    log('Waiting for client to start XMODEM protocol...');
+  x.on("ready", (packagedBufferLength: number) => {
+    log("Waiting for client to start XMODEM protocol...");
     ctx.totalBlocks = packagedBufferLength;
   });
 
-  x.on('start', () => {
+  x.on("start", () => {
     ctx.transferStartedAt = Date.now();
     ctx.lastLoggedAt = ctx.transferStartedAt;
     ctx.transferredBlocks = 0;
     log(`Transfer started for ${ctx.requestedFile}`);
   });
 
-  x.on('status', (statusObj: { signal: string; block: number }) => {
+  x.on("status", (statusObj: { signal: string; block: number }) => {
     const now = Date.now();
     if (now - ctx.lastLoggedAt < 5000) {
       return;
     }
 
-    if (statusObj.signal !== 'SOH') {
+    if (statusObj.signal !== "SOH") {
       return;
     }
 
@@ -278,7 +278,7 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
       `Transferred ${transferredBlocks} of ${
         ctx.totalBlocks
       } blocks - ${bytesPerSecond}B/sec - ETA: ${
-        minutesLeft ? minutesLeft + 'min ' : ''
+        minutesLeft ? minutesLeft + "min " : ""
       }${secondsLeft}sec`
     );
 
@@ -286,7 +286,7 @@ function confirmAndStartXModemTransfer(ctx: Context, input: string) {
     ctx.lastLoggedAt = now;
   });
 
-  x.on('stop', (exitCode: number) => {
+  x.on("stop", (exitCode: number) => {
     writeln(ctx);
     writeln(ctx);
     if (exitCode === 0) {
@@ -309,13 +309,13 @@ function getServerIpAddress() {
   for (const name of Object.keys(interfaces)) {
     if (interfaces[name]) {
       for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
+        if (iface.family === "IPv4" && !iface.internal) {
           return iface.address;
         }
       }
     }
   }
-  return 'localhost';
+  return "localhost";
 }
 
 server.listen(port, () => {
