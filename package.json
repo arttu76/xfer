@@ -24,7 +24,8 @@
     "fs": "^0.0.1-security",
     "net": "^1.0.2",
     "path": "^0.12.7",
-    "xmodem.ts": "^0.1.0"
+    "xmodem.ts": "^0.1.0",
+    "zmodem2": "^1.2.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
