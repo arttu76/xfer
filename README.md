@@ -30,16 +30,15 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-Usage: xfer [options]
+xfer v1.6.1 — XMODEM / ZMODEM file server for retro computers
 
-Start XFER on your computer to allow (retro?) computers to download files with devices like WiModem232.
+Usage: xfer [flags]
 
-Options:
-  -V, --version             output the version number
   -p, --port <number>       port to use (default: 23)
   -d, --directory <string>  directory to serve (default: current directory)
   -s, --secure              secure mode: don't allow user to change directories
-  -h, --help                display help for command
+  -V, --version             print version and exit
+  -h, --help                print this help and exit
 ```
 
 Note: the default port is 23 (telnet), which on most systems requires
@@ -50,8 +49,6 @@ higher port instead, for example 2000:
 $ xfer -p 2000
 2026-04-22T12:15:30.123Z [INFO] Server now listening on 192.168.1.194:2000 / 10.0.0.5:2000
 ```
-
-ZMODEM support is built in — no external tools required.
 
 ### 2. On your "retro" computer, use terminal to connect:
 
@@ -85,48 +82,53 @@ Enjoy!
 
 ## Running from source
 
-Don't want to download binaries? If you have development tools on your computer, just do:
+Don't want to download binaries? If you have Go installed, just do:
 
 ```
 $ git clone https://github.com/arttu76/xfer
 $ cd xfer
-$ npm install
-$ npm start
+$ go run ./cmd/xfer
 ```
 
 ## Development
 
-The project is written in TypeScript and uses a modular architecture:
+The project is written in Go and uses a modular architecture:
 
-- `server.ts` - Main server implementation
-- `fileNavigator.ts` - File browsing and navigation functionality
-- `protocolSelector.ts` - Protocol selection and common transfer logic
-- `xmodemTransfer.ts` - XMODEM service-layer wrapper (uses `xmodem.ts` library)
-- `zmodemTransfer.ts` - ZMODEM service-layer wrapper
-- `zmodemEngine.ts` - In-process ZMODEM sender built on the `zmodem2` library,
-  patched for retro-terminal compatibility (CRC16, 1 KB subpackets, 8 KB
-  frames, ESCCTL negotiation, lrzsz-format ZFILE)
-- `utils.ts` - Common utility functions (MD5, sleep, terminal-flush constant)
-- `logger.ts` - Centralized logging system
-- `constants.ts` - Configuration constants
-- `types.ts` - TypeScript type definitions
+- `cmd/xfer/` — CLI entry point, flag parsing, TCP accept loop
+- `internal/session/` — per-connection state machine and transfer handlers
+- `internal/navigator/` — file browsing, listing, secure-mode path checks
+- `internal/protocol/` — XMODEM/ZMODEM/cancel selection prompt
+- `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
+- `internal/zmodem/` — ZMODEM sender tuned for retro-terminal compatibility
+  (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
+  fileinfo, `rz\r` trigger, 5×CAN cancel)
+- `internal/logger/` — timestamped stderr logging
+- `internal/testutil/` — shared loopback / capture / golden-diff helpers for tests
+- `internal/constants/` — CLI defaults and menu prefixes
+- `test/golden/` — committed byte-exact wire-format fixtures
 
 ### Building
 
-To run directly from source:
-
 ```
-$ npm start
-```
-
-To build standalone binaries for Linux, macOS and Windows:
-
-```
-$ npm run buildBinaries
+$ make build            # local binary in ./bin/xfer
+$ make dist             # cross-compile for linux/macos/windows × amd64/arm64
+$ make test             # run the test suite
 ```
 
-The resulting executables are placed in the `bin/` directory (`xfer-linux`,
-`xfer-macos`, `xfer-win.exe`) and can be run without Node.js installed.
+### Tests
+
+The XMODEM and ZMODEM packages each include a byte-level wire-format test
+that compares the sender's output against a committed golden dump in
+`test/golden/`. The goldens were captured from a known-good session that
+had been tested against real retro terminals (Term 4.8 on Amiga, lrzsz on
+Linux, SyncTerm, NComm), so passing them proves wire-format compatibility
+with those receivers byte-for-byte.
+
+The rest of the suite covers the non-golden behaviors: ZRPOS resume,
+cancel (5×CAN → 8×CAN + 10×BS echo), activity timeout, subpacket sizing,
+8-per-ACK pacing, ESCCTL negotiation for lrzsz / Term 4.8 / NComm caps,
+lrzsz fileinfo format, XMODEM CRC / checksum modes and block wrap past
+32 KB, navigator path-traversal guard, and protocol selector branches.
 
 ## Security Notes
 

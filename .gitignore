@@ -1,6 +1,3 @@
-node_modules
-js
-
-bin
-
-.vscode
+bin/
+.vscode/
+.DS_Store
