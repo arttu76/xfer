@@ -12,11 +12,9 @@ XFER is such a program: run it on your computer, connect from your retro compute
 - Allows browsing of the host file system
 - File transfer using XMODEM protocol (very slow but maximally compatible)
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
-- Tuned for Amiga Term 4.8 / xprzmodem.library compatibility (CRC16, 1 KB
-  subpackets, 8 KB frames, lrzsz-style ZFILE metadata, ESCCTL negotiation,
-  CAN-burst cancel)
+- Tuned for retro terminals on old computers (CRC16, 1 KB subpackets, 8 KB
+  frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
-- Case-insensitive file sorting for better navigation
 - Secure mode to restrict directory access
 - Binaries available for Windows, macOS and Linux
 
@@ -44,11 +42,13 @@ Options:
   -h, --help                display help for command
 ```
 
-...but most of the time you can just start it without any options:
+Note: the default port is 23 (telnet), which on most systems requires
+administrator/root privileges to bind. You'll most likely want to pick a
+higher port instead, for example 2000:
 
 ```
-$ xfer
-2024-07-18T12:15:30.123Z [INFO] Server now listening in 192.168.1.194:23
+$ xfer -p 2000
+2026-04-22T12:15:30.123Z [INFO] Server now listening on 192.168.1.194:2000 / 10.0.0.5:2000
 ```
 
 ZMODEM support is built in — no external tools required.
@@ -58,7 +58,7 @@ ZMODEM support is built in — no external tools required.
 We're using the Hayes AT command to "dial" into the host computer's IP and port:
 
 ```
-ATDT192.168.1.194:23
+ATDT192.168.1.194:2000
 ----- /Users/arttu/games -----
 1 <D> ..
 2 ... paradroid.prg
@@ -91,7 +91,7 @@ Don't want to download binaries? If you have development tools on your computer,
 $ git clone https://github.com/arttu76/xfer
 $ cd xfer
 $ npm install
-$ npm run start
+$ npm start
 ```
 
 ## Development
@@ -113,13 +113,20 @@ The project is written in TypeScript and uses a modular architecture:
 
 ### Building
 
-To build the project:
+To run directly from source:
 
 ```
-$ npm run build
+$ npm start
 ```
 
-This will compile the TypeScript files to JavaScript in the `js/` directory.
+To build standalone binaries for Linux, macOS and Windows:
+
+```
+$ npm run buildBinaries
+```
+
+The resulting executables are placed in the `bin/` directory (`xfer-linux`,
+`xfer-macos`, `xfer-win.exe`) and can be run without Node.js installed.
 
 ## Security Notes
 
@@ -130,4 +137,4 @@ This will compile the TypeScript files to JavaScript in the `js/` directory.
 
 ## License
 
-This project is open source and available under the MIT License.
+This project is open source and available under the WTFPL.
