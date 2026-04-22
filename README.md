@@ -30,7 +30,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.6.1 — XMODEM / ZMODEM file server for retro computers
+xfer v1.0.7 — XMODEM / ZMODEM file server for retro computers
 
 Usage: xfer [flags]
 
