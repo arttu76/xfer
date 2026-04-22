@@ -136,11 +136,16 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 		}
 		return
 	}
-	if errors.Is(err, zmodem.ErrCancelled) {
+	switch {
+	case errors.Is(err, zmodem.ErrCancelled):
 		_ = ctx.Writeln("")
 		_ = ctx.Writeln("Transfer cancelled.")
 		logger.TransferStatus("ZMODEM", "Transfer cancelled by user")
-	} else {
+	case errors.Is(err, zmodem.ErrSkipped):
+		_ = ctx.Writeln("")
+		_ = ctx.Writeln("Transfer skipped.")
+		logger.TransferStatus("ZMODEM", "Transfer skipped by receiver")
+	default:
 		logger.TransferStatus("ZMODEM", err.Error())
 	}
 	if onDone != nil {

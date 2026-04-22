@@ -63,6 +63,42 @@ func zfin() []byte {
 	return zmodem.BuildZhexHeader(zmodem.FrameZFIN, 0)
 }
 
+func zskip() []byte {
+	return zmodem.BuildZhexHeader(zmodem.FrameZSKIP, 0)
+}
+
+func zabort() []byte {
+	return zmodem.BuildZhexHeader(zmodem.FrameZABORT, 0)
+}
+
+func zferr() []byte {
+	return zmodem.BuildZhexHeader(zmodem.FrameZFERR, 0)
+}
+
+func znak() []byte {
+	return zmodem.BuildZhexHeader(zmodem.FrameZNAK, 0)
+}
+
+// containsZhexFrame checks buf for a ZHEX header of the given frame type.
+// A ZHEX frame starts with ZPAD ZPAD ZDLE ZHEX and the frame type is the
+// first two hex digits after the prefix.
+func containsZhexFrame(buf []byte, frame byte) bool {
+	prefix := []byte{zmodem.ZPAD, zmodem.ZPAD, zmodem.ZDLE, zmodem.ZHEX}
+	want := []byte{"0123456789abcdef"[frame>>4], "0123456789abcdef"[frame&0xf]}
+	idx := 0
+	for {
+		i := bytes.Index(buf[idx:], prefix)
+		if i < 0 {
+			return false
+		}
+		start := idx + i + len(prefix)
+		if start+2 <= len(buf) && bytes.Equal(buf[start:start+2], want) {
+			return true
+		}
+		idx = start
+	}
+}
+
 // Capability bytes observed in real ZRINIT frames:
 //   0x23 — Term 4.8 on Amiga, and lrzsz without --escape
 //   0x63 — lrzsz with --escape (adds the ESCCTL bit 0x40)
@@ -244,6 +280,262 @@ func TestZrposResume(t *testing.T) {
 
 	_, _ = client.Write(bytes.Repeat([]byte{0x18}, 8))
 	_ = <-errCh
+}
+
+// TestZrposMidStreamRetransmit simulates a receiver that NAKs a burst by
+// sending ZRPOS instead of ZACK — exactly what Term 4.8 does when a data
+// subpacket fails CRC. The sender must rewind to the requested offset and
+// resend a ZDATA burst from there, rather than blocking on a ZACK that
+// will never arrive.
+func TestZrposMidStreamRetransmit(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	// 12 KB — more than one burst (8 KB) so we exercise the mid-stream case.
+	data := make([]byte, 12*1024)
+	for i := range data {
+		data[i] = byte(i * 3)
+	}
+	errCh := runSend(server, data, "retry.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zrpos(0))
+
+	// Wait for the first burst to complete (first ZCRCW after the ZFILE one).
+	cap.WaitFor(t, func(b []byte) bool { return countTerm(b, zmodem.ZCRCW) >= 2 }, 3*time.Second)
+	// Receiver rejects the burst and asks us to restart from offset 4096.
+	const retryOffset uint32 = 4096
+	_, _ = client.Write(zrpos(retryOffset))
+
+	// Sender must emit a fresh ZDATA header at offset 4096. Wait for the
+	// second ZDATA header (the first one was at offset 0).
+	cap.WaitFor(t, func(b []byte) bool {
+		count := 0
+		idx := 0
+		prefix := []byte{zmodem.ZPAD, zmodem.ZDLE, zmodem.ZBIN, zmodem.FrameZDATA}
+		for {
+			i := bytes.Index(b[idx:], prefix)
+			if i < 0 {
+				return false
+			}
+			count++
+			if count >= 2 {
+				return true
+			}
+			idx += i + len(prefix)
+		}
+	}, 3*time.Second)
+
+	out := cap.Bytes()
+	prefix := []byte{zmodem.ZPAD, zmodem.ZDLE, zmodem.ZBIN, zmodem.FrameZDATA}
+	first := bytes.Index(out, prefix)
+	second := bytes.Index(out[first+len(prefix):], prefix) + first + len(prefix)
+	offBytes := unescapeN(out[second+4:], 4)
+	got := uint32(offBytes[0]) | uint32(offBytes[1])<<8 | uint32(offBytes[2])<<16 | uint32(offBytes[3])<<24
+	if got != retryOffset {
+		t.Fatalf("retransmit ZDATA offset: got %d want %d", got, retryOffset)
+	}
+
+	_, _ = client.Write(bytes.Repeat([]byte{0x18}, 8))
+	_ = <-errCh
+}
+
+// TestZskipInsteadOfZrpos simulates Term 4.8's "Skip file" button: the
+// receiver replies to our ZFILE with ZSKIP instead of ZRPOS. The sender
+// must return ErrSkipped cleanly and emit a ZFIN+OO closer rather than
+// sitting on waitForZrpos until the activity timeout fires.
+func TestZskipInsteadOfZrpos(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	errCh := runSend(server, bytes.Repeat([]byte{0x42}, 2000), "skipme.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zskip())
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, zmodem.ErrSkipped) {
+			t.Fatalf("want ErrSkipped, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("sender did not exit after ZSKIP")
+	}
+	// gracefulClose should have emitted ZFIN + OO as its parting shot.
+	out := cap.Bytes()
+	if !containsZhexFrame(out, zmodem.FrameZFIN) {
+		t.Fatalf("expected ZFIN header after ZSKIP, got: %x", out)
+	}
+	if !bytes.Contains(out, []byte("OO")) {
+		t.Fatalf("expected OO terminator after ZSKIP, got: %x", out)
+	}
+}
+
+// TestZabortInsteadOfZrpos covers the other receiver-decline frame at the
+// ZFILE response point: Term 4.8's "Skip batch" can come as ZABORT.
+func TestZabortInsteadOfZrpos(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	errCh := runSend(server, bytes.Repeat([]byte{0x42}, 2000), "abort.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zabort())
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, zmodem.ErrSkipped) {
+			t.Fatalf("want ErrSkipped, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("sender did not exit after ZABORT")
+	}
+	out := cap.Bytes()
+	if !containsZhexFrame(out, zmodem.FrameZFIN) {
+		t.Fatalf("expected ZFIN header after ZABORT, got: %x", out)
+	}
+}
+
+// TestZferrEndsSession covers the "receiver hit a fatal file error" path
+// — ZFERR is rare but our handler treats it the same as ZSKIP/ZABORT.
+func TestZferrEndsSession(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	errCh := runSend(server, bytes.Repeat([]byte{0x42}, 2000), "ferr.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zferr())
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, zmodem.ErrSkipped) {
+			t.Fatalf("want ErrSkipped, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("sender did not exit after ZFERR")
+	}
+}
+
+// TestZskipMidStream covers the less common path where the receiver
+// decides to skip the file after already ACKing a burst (e.g. contents
+// were determined uninteresting partway through).
+func TestZskipMidStream(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	data := make([]byte, 12*1024)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	errCh := runSend(server, data, "midskip.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zrpos(0))
+	cap.WaitFor(t, func(b []byte) bool { return countTerm(b, zmodem.ZCRCW) >= 2 }, 3*time.Second)
+	_, _ = client.Write(zskip())
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, zmodem.ErrSkipped) {
+			t.Fatalf("want ErrSkipped, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("sender did not exit after mid-stream ZSKIP")
+	}
+}
+
+// TestZnakMidStreamResend covers ZNAK: receiver couldn't parse the ZDATA
+// header and asks us to resend the same burst. The sender should emit a
+// second ZDATA header at the same offset.
+func TestZnakMidStreamResend(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	data := make([]byte, 12*1024)
+	for i := range data {
+		data[i] = byte(i * 5)
+	}
+	errCh := runSend(server, data, "nak.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zrpos(0))
+	cap.WaitFor(t, func(b []byte) bool { return countTerm(b, zmodem.ZCRCW) >= 2 }, 3*time.Second)
+	_, _ = client.Write(znak())
+
+	// Wait for a second ZDATA header — same offset (0) as the first.
+	cap.WaitFor(t, func(b []byte) bool {
+		prefix := []byte{zmodem.ZPAD, zmodem.ZDLE, zmodem.ZBIN, zmodem.FrameZDATA}
+		count := 0
+		idx := 0
+		for {
+			i := bytes.Index(b[idx:], prefix)
+			if i < 0 {
+				return false
+			}
+			count++
+			if count >= 2 {
+				return true
+			}
+			idx += i + len(prefix)
+		}
+	}, 3*time.Second)
+
+	out := cap.Bytes()
+	prefix := []byte{zmodem.ZPAD, zmodem.ZDLE, zmodem.ZBIN, zmodem.FrameZDATA}
+	first := bytes.Index(out, prefix)
+	second := bytes.Index(out[first+len(prefix):], prefix) + first + len(prefix)
+	offBytes := unescapeN(out[second+4:], 4)
+	got := uint32(offBytes[0]) | uint32(offBytes[1])<<8 | uint32(offBytes[2])<<16 | uint32(offBytes[3])<<24
+	if got != 0 {
+		t.Fatalf("resend ZDATA offset: got %d want 0 (burst restart)", got)
+	}
+
+	_, _ = client.Write(bytes.Repeat([]byte{0x18}, 8))
+	_ = <-errCh
+}
+
+// TestZabortMidStream simulates "Skip batch": the receiver ACKs the first
+// burst, then sends ZABORT instead of ACKing the second. Sender must stop
+// and return ErrSkipped rather than blocking.
+func TestZabortMidStream(t *testing.T) {
+	pinClock(t, fixedEpoch)
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	data := make([]byte, 12*1024)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	errCh := runSend(server, data, "abort.bin")
+
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, zrqinitPrefix) }, 2*time.Second)
+	_, _ = client.Write(zrinit(capsTerm48))
+	cap.WaitFor(t, func(b []byte) bool { return bytes.Contains(b, []byte{zmodem.ZDLE, zmodem.ZCRCW}) }, 2*time.Second)
+	_, _ = client.Write(zrpos(0))
+	// Wait for first ZDATA burst (first ZCRCW after the ZFILE one).
+	cap.WaitFor(t, func(b []byte) bool { return countTerm(b, zmodem.ZCRCW) >= 2 }, 3*time.Second)
+	_, _ = client.Write(zabort())
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, zmodem.ErrSkipped) {
+			t.Fatalf("want ErrSkipped, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("sender did not exit after ZABORT")
+	}
 }
 
 func TestSocketDisconnectCleansUp(t *testing.T) {

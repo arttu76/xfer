@@ -37,6 +37,11 @@ var cancelEcho = []byte{
 // ErrCancelled is returned when the receiver aborts via ≥5 consecutive CANs.
 var ErrCancelled = errors.New("ZMODEM transfer cancelled by receiver")
 
+// ErrSkipped is returned when the receiver asks the sender to stop via a
+// ZSKIP or ZABORT header — the Term 4.8 "Skip file" / "Skip batch" buttons.
+// Not a transport error; the session ended by user choice on the far end.
+var ErrSkipped = errors.New("ZMODEM transfer skipped by receiver")
+
 // rzTrigger is the preamble terminals like NComm / Term 4.8 require before
 // recognizing a ZMODEM session. Modern receivers (lrzsz) tolerate it harmlessly.
 var rzTrigger = []byte("rz\r")
@@ -65,7 +70,7 @@ func SendBuffer(conn net.Conn, data []byte, filename string) error {
 
 	s := newSender(conn, data, filename)
 	err := s.run()
-	if err == nil || errors.Is(err, ErrCancelled) {
+	if err == nil || errors.Is(err, ErrCancelled) || errors.Is(err, ErrSkipped) {
 		return err
 	}
 	// Strip Go's "io:" prefix on closed-pipe errors; surface cleanly to the
@@ -123,14 +128,22 @@ func (s *sender) run() error {
 		return err
 	}
 
-	// Receiver responds with ZRPOS(offset). Read it.
+	// Receiver responds with ZRPOS(offset), or ZSKIP/ZABORT to decline.
 	offset, err := s.waitForZrpos()
 	if err != nil {
+		if errors.Is(err, ErrSkipped) {
+			s.gracefulClose()
+			return err
+		}
 		return err
 	}
 
 	// Stream ZDATA bursts from `offset` to end-of-file, pacing ACKs.
 	if err := s.streamData(offset); err != nil {
+		if errors.Is(err, ErrSkipped) {
+			s.gracefulClose()
+			return err
+		}
 		return err
 	}
 
@@ -210,9 +223,39 @@ func (s *sender) awaitHexFrame(want byte, sniffEscctl bool) error {
 }
 
 // waitForZrpos waits for a ZRPOS header (can be ZHEX or ZBIN), parses the
-// 4-byte offset, and returns it.
+// 4-byte offset, and returns it. If the receiver instead sends ZSKIP or
+// ZABORT (the two "I don't want this file" signals Term 4.8 issues from
+// its Skip file / Skip batch buttons), returns ErrSkipped. ZFERR is a
+// fatal file error on the receiver side — surface it the same way.
 func (s *sender) waitForZrpos() (uint32, error) {
-	return s.awaitFrameWithCount(FrameZRPOS)
+	frame, count, err := s.awaitOneOfWithCount(FrameZRPOS, FrameZSKIP, FrameZABORT, FrameZFERR)
+	if err != nil {
+		return 0, err
+	}
+	switch frame {
+	case FrameZRPOS:
+		return count, nil
+	case FrameZSKIP:
+		logger.Info("ZMODEM receiver sent ZSKIP — skipping file")
+		return 0, ErrSkipped
+	case FrameZABORT:
+		logger.Info("ZMODEM receiver sent ZABORT — ending session")
+		return 0, ErrSkipped
+	case FrameZFERR:
+		logger.Info("ZMODEM receiver sent ZFERR — aborting transfer")
+		return 0, ErrSkipped
+	}
+	return 0, fmt.Errorf("unexpected frame type %d", frame)
+}
+
+// gracefulClose emits a best-effort ZFIN + OO so the receiver sees a clean
+// session terminator. Used when the receiver has signalled ZSKIP/ZABORT —
+// the transfer is over, but we still owe the peer a tidy goodbye so it
+// doesn't sit in its own cleanup timeout. Any write error is swallowed;
+// we're already on the failure path.
+func (s *sender) gracefulClose() {
+	_, _ = s.conn.Write(BuildZhexHeader(FrameZFIN, 0))
+	_, _ = s.conn.Write([]byte{'O', 'O'})
 }
 
 // matchNextHexFrame appends `cur` to the rolling hex-sniff window and
@@ -269,6 +312,8 @@ func (s *sender) buildZfile() []byte {
 
 // streamData emits ZDATA bursts from `startOffset` to end-of-file, flushing
 // every `subpacketsPerAck` subpackets with a ZCRCW that waits for a ZACK.
+// On ZRPOS (receiver-requested retransmit) or ZNAK (bad header), the stream
+// rewinds and resends from the requested offset.
 func (s *sender) streamData(startOffset uint32) error {
 	offset := startOffset
 	for int(offset) < len(s.data) {
@@ -305,46 +350,86 @@ func (s *sender) streamData(startOffset uint32) error {
 		if _, err := s.conn.Write(frame); err != nil {
 			return err
 		}
-		// A ZCRCW terminator always requests an ACK — wait for it before
-		// either starting the next burst or emitting ZEOF. Skipping the
-		// wait on EOF works against modern receivers but confuses some
-		// retro ones (they NAK the ZEOF because they haven't ACKed the
-		// last subpacket yet).
-		if err := s.waitForZack(); err != nil {
+		// A ZCRCW terminator always requests a response from the receiver:
+		// ZACK on success, ZRPOS(offset) when a subpacket CRC failed, or
+		// ZNAK when the ZDATA header itself was garbled. Waiting also keeps
+		// retro receivers (Term 4.8 / NComm) in step — they NAK a premature
+		// ZEOF if the last subpacket isn't acknowledged first.
+		resp, err := s.awaitBurstResponse()
+		if err != nil {
 			return err
+		}
+		switch resp.frame {
+		case FrameZACK:
+			// Continue with next burst.
+		case FrameZRPOS:
+			// Receiver detected a CRC error and wants us to rewind. Flush
+			// any stale ZRPOS retries it may have already queued so the
+			// next awaitBurstResponse sees a fresh response to our retry.
+			logger.Info(fmt.Sprintf("ZMODEM receiver requested retransmit from offset %d", resp.offset))
+			s.reader.drain()
+			offset = resp.offset
+		case FrameZNAK:
+			// Header was unreadable; receiver wants the same burst again.
+			logger.Info("ZMODEM receiver NAK — resending burst")
+			s.reader.drain()
+			offset = burstStart
+		case FrameZSKIP:
+			logger.Info("ZMODEM receiver sent ZSKIP — skipping file")
+			return ErrSkipped
+		case FrameZABORT:
+			logger.Info("ZMODEM receiver sent ZABORT — ending session")
+			return ErrSkipped
+		case FrameZFERR:
+			logger.Info("ZMODEM receiver sent ZFERR — aborting transfer")
+			return ErrSkipped
 		}
 	}
 	return nil
 }
 
-// waitForZack reads bytes until a ZACK header (ZHEX or ZBIN) is parsed.
-func (s *sender) waitForZack() error {
-	_, err := s.awaitFrameWithCount(FrameZACK)
-	return err
+// burstResponse is a receiver reply to a ZCRCW-terminated data burst.
+type burstResponse struct {
+	frame  byte
+	offset uint32
 }
 
-// awaitFrameWithCount scans incoming bytes for a frame of the given type and
-// returns its 32-bit count/offset payload. Accepts both ZHEX and ZBIN
-// encodings, which matters because most retro receivers send ZHEX while
-// lrzsz-in-CANOVIO-mode can send ZBIN.
-func (s *sender) awaitFrameWithCount(want byte) (uint32, error) {
+// awaitBurstResponse blocks until the receiver sends a ZACK, ZRPOS, ZNAK,
+// ZSKIP, ZABORT, or ZFERR header. Accepts both ZHEX and ZBIN encodings.
+func (s *sender) awaitBurstResponse() (burstResponse, error) {
+	frame, count, err := s.awaitOneOfWithCount(
+		FrameZACK, FrameZRPOS, FrameZNAK, FrameZSKIP, FrameZABORT, FrameZFERR,
+	)
+	if err != nil {
+		return burstResponse{}, err
+	}
+	return burstResponse{frame: frame, offset: count}, nil
+}
+
+// awaitOneOfWithCount scans incoming bytes for any frame whose type appears
+// in `wants` and returns (frame, 32-bit count/offset payload). Accepts both
+// ZHEX and ZBIN encodings — retro receivers send ZHEX, lrzsz-in-CANOVIO-mode
+// can send ZBIN.
+func (s *sender) awaitOneOfWithCount(wants ...byte) (byte, uint32, error) {
 	const windowSize = 64
 	var rolling []byte
 	for {
 		b, err := s.reader.readByte(activityTimeout)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		s.maybeNegotiateEscctl([]byte{b})
 		rolling = append(rolling, b)
 		if len(rolling) > windowSize {
 			rolling = rolling[len(rolling)-windowSize:]
 		}
-		if count, ok := scanZhexFrame(rolling, want); ok {
-			return count, nil
-		}
-		if count, ok := scanZbinFrame(rolling, want); ok {
-			return count, nil
+		for _, want := range wants {
+			if count, ok := scanZhexFrame(rolling, want); ok {
+				return want, count, nil
+			}
+			if count, ok := scanZbinFrame(rolling, want); ok {
+				return want, count, nil
+			}
 		}
 	}
 }
@@ -532,6 +617,15 @@ func (r *reader) readByte(timeout time.Duration) (byte, error) {
 	b := r.buf[0]
 	r.buf = r.buf[1:]
 	return b, nil
+}
+
+// drain discards any bytes already read from the wire. Used after handling a
+// ZRPOS/ZNAK so that follow-up retries the receiver queued while it was
+// waiting for us don't get misread as a response to our next burst.
+func (r *reader) drain() {
+	r.mu.Lock()
+	r.buf = r.buf[:0]
+	r.mu.Unlock()
 }
 
 func (r *reader) emitCancelEcho() {
