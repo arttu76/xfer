@@ -48,7 +48,8 @@ func XmodemTransfer(ctx *Context, _ *Config, onDone func(success bool, exitCode 
 		blocks = 1
 	}
 	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
-	_ = ctx.Writeln(fmt.Sprintf("MD5: %x", md5.Sum(data)))
+	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
+	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
 	_ = ctx.Writeln(fmt.Sprintf("Initiating XMODEM transfer for %s", ctx.RequestedFile))
 	_ = ctx.Writeln(fmt.Sprintf("Please start your XMODEM receiver NOW for %d blocks.", blocks))
 
@@ -116,7 +117,8 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 	}
 	name := filepath.Base(ctx.RequestedFile)
 	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
-	_ = ctx.Writeln(fmt.Sprintf("MD5: %x", md5.Sum(data)))
+	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
+	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
 	_ = ctx.Writeln(fmt.Sprintf("Initiating ZMODEM transfer for %s", ctx.RequestedFile))
 	_ = ctx.Writeln("Please start your ZMODEM receiver NOW.")
 
@@ -154,3 +156,7 @@ type connAdapter struct {
 }
 
 func (c connAdapter) SetReadDeadline(t time.Time) error { return c.Conn.SetReadDeadline(t) }
+
+func humanBytes(n int) string {
+	return fmt.Sprintf("%d bytes", n)
+}

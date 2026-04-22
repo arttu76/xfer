@@ -2,6 +2,7 @@ package xmodem
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -53,6 +54,10 @@ func Send(conn deadlineConn, data []byte, cfg Config) error {
 	if cfg.ReadTimeout == 0 {
 		cfg.ReadTimeout = 10 * time.Second
 	}
+	// Clear the read deadline on return so the caller's subsequent reads on
+	// the same conn don't inherit whatever timeout we last set.
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
 	totalBlocks := (len(data) + BlockSize - 1) / BlockSize
 	if totalBlocks == 0 {
 		totalBlocks = 1 // always send at least one (padded) block
@@ -97,6 +102,7 @@ type deadlineConn interface {
 func waitForStart(conn deadlineConn, timeout time.Duration) (mode, error) {
 	buf := make([]byte, 1)
 	timeouts := 0
+	var strayBytes []byte
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		_, err := conn.Read(buf)
@@ -104,13 +110,19 @@ func waitForStart(conn deadlineConn, timeout time.Duration) (mode, error) {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				timeouts++
 				if timeouts >= maxTimeoutsInARow {
-					return 0, errors.New("XMODEM: receiver never sent start byte")
+					if len(strayBytes) > 0 {
+						return 0, fmt.Errorf("XMODEM: receiver never sent start byte (saw %d other bytes: %x)", len(strayBytes), strayBytes)
+					}
+					return 0, errors.New("XMODEM: receiver never sent start byte (no bytes received)")
 				}
 				continue
 			}
 			return 0, err
 		}
-		switch buf[0] {
+		// Accept the start byte whether or not the 8th bit happens to be
+		// set — some retro terminals run in 7-bit mode with the parity bit
+		// stuck high, and the standard is silent on the top bit anyway.
+		switch buf[0] & 0x7f {
 		case NAK:
 			return modeChecksum, nil
 		case CRC:
@@ -118,7 +130,9 @@ func waitForStart(conn deadlineConn, timeout time.Duration) (mode, error) {
 		case CAN:
 			return 0, errors.New("XMODEM: receiver cancelled before start")
 		}
-		// Ignore other bytes (stray echoes from the terminal line).
+		if len(strayBytes) < 16 {
+			strayBytes = append(strayBytes, buf[0])
+		}
 	}
 }
 
