@@ -144,20 +144,21 @@ const server = net.createServer((socket) => {
   });
 });
 
-function getServerIpAddress() {
+function getServerIpAddresses() {
+  const addresses: string[] = [];
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     if (interfaces[name]) {
       for (const iface of interfaces[name]) {
         if (iface.family === IPV4_FAMILY && !iface.internal) {
-          return iface.address;
+          addresses.push(iface.address);
         }
       }
     }
   }
-  return "localhost";
+  return addresses.length > 0 ? addresses : ["localhost"];
 }
 
 server.listen(port, () => {
-  log(`Server now listening in ${getServerIpAddress()}:${port}`);
+  log(`Server now listening on ${getServerIpAddresses().map(ip => `${ip}:${port}`).join(" / ")}`);
 });
