@@ -17,7 +17,7 @@ import (
 	"github.com/solvalou/xfer/internal/viewer"
 )
 
-const version = "1.1.0"
+var version = "1.1.0"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")

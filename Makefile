@@ -3,7 +3,7 @@ BINDIR = bin
 LDFLAGS = -s -w -X main.version=$(VERSION)
 GOFLAGS = -trimpath
 
-.PHONY: all build test clean linux macos windows dist
+.PHONY: all build test clean dist linux-amd64 linux-arm64 macos-amd64 macos-arm64 windows-amd64
 
 all: build
 
