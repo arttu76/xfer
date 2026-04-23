@@ -1,12 +1,9 @@
 package session
 
 import (
-	"crypto/md5"
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,48 +17,31 @@ import (
 // session — the per-connection state machine below is therefore invoked
 // *from* those packages via HandleConnection in cmd/xfer/main.go.
 
-// All three transfer functions share a common shape: set mode, announce
-// the file with MD5 / size, then hand the socket to the protocol sender.
-// The prelude below captures that shared piece and is the single place
-// that emits the "Ready to download / Size / MD5 / Initiating" banner.
-
 // OnDone is the completion callback for every transfer. exitCode follows
 // the XMODEM convention (0 = success, non-zero = failure); for ZMODEM
 // and Kermit we use 0/1 since they don't have a protocol-level code.
 type OnDone func(success bool, exitCode int)
 
-// transferPrelude sets transfer mode, reads the file, writes the common
-// banner, and returns the file bytes plus basename. On error the caller's
-// onDone is invoked (when non-nil) and err is returned so the transfer
-// function can bail out.
+// transferPrelude flips the connection into transfer mode and returns the
+// bytes + display name to send. The size / MD5 / "Ready to download" banner
+// has already been printed by the caller (navigator on local pick, main on
+// URL download) before the protocol prompt, so this prelude only emits a
+// short "Initiating …" line and leaves the per-protocol "please start your
+// receiver NOW" detail to the transfer function itself.
 func transferPrelude(ctx *Context, protoName string, onDone OnDone) ([]byte, string, error) {
 	ctx.Mode = ModeTransferFile
 	_ = ctx.Writeln("")
 
-	if ctx.RequestedFile == "" {
+	if ctx.RequestedBody == nil {
 		_ = ctx.Writeln("Error: No file selected for transfer")
 		if onDone != nil {
 			onDone(false, -1)
 		}
-		return nil, "", errors.New("no file selected for transfer")
+		return nil, "", errors.New("no file buffered for transfer")
 	}
 
-	data, err := os.ReadFile(ctx.RequestedFile)
-	if err != nil {
-		logger.TransferStatus(protoName, fmt.Sprintf("Error reading file: %v", err))
-		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
-		if onDone != nil {
-			onDone(false, -1)
-		}
-		return nil, "", err
-	}
-
-	name := filepath.Base(ctx.RequestedFile)
-	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
-	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
-	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
 	_ = ctx.Writeln(fmt.Sprintf("Initiating %s transfer for %s", protoName, ctx.RequestedFile))
-	return data, name, nil
+	return ctx.RequestedBody, ctx.RequestedName, nil
 }
 
 // XmodemTransfer reads the requested file and pushes it to the client via
@@ -230,7 +210,3 @@ type connAdapter struct {
 }
 
 func (c connAdapter) SetReadDeadline(t time.Time) error { return c.Conn.SetReadDeadline(t) }
-
-func humanBytes(n int) string {
-	return fmt.Sprintf("%d bytes", n)
-}

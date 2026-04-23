@@ -6,8 +6,6 @@ package viewer
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -67,21 +65,23 @@ type state struct {
 	pendingWidth int
 }
 
-// Start reads the requested file into memory and enters view mode. On a
-// read error we show the message and fall back to the listing.
+// Start enters view mode using the already-staged body on ctx. The navigator
+// (local pick) or URL handler has placed the bytes in ctx.RequestedBody and
+// a display name in ctx.RequestedName before calling us, so the viewer
+// never touches the disk.
 func Start(ctx *session.Context, cfg *session.Config) {
-	data, err := os.ReadFile(ctx.RequestedFile)
-	if err != nil {
-		logger.Error(fmt.Sprintf("view: read %s: %v", ctx.RequestedFile, err))
+	if ctx.RequestedBody == nil {
+		logger.Error("viewer.Start called without a staged body")
 		_ = ctx.Writeln("")
-		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
+		_ = ctx.Writeln("Error: no file buffered for viewing")
 		navigator.ListFiles(ctx, cfg)
 		return
 	}
+	data := ctx.RequestedBody
 
 	s := &state{
 		data:          data,
-		name:          filepath.Base(ctx.RequestedFile),
+		name:          ctx.RequestedName,
 		width:         DefaultWidth,
 		height:        DefaultHeight,
 		lastMatchByte: -1,
@@ -485,9 +485,9 @@ func (s *state) drawHelp(ctx *session.Context) {
 	_ = ctx.Writeln("")
 	_ = ctx.Writeln("Viewer commands:")
 	_ = ctx.Writeln("  f / b   one line forward / back")
-	_ = ctx.Writeln("  d / u   one page down / up (SPACE = d)")
+	_ = ctx.Writeln("  d / u   one page down / up (SPACE=d)")
 	_ = ctx.Writeln("  m       toggle hex / char display")
-	_ = ctx.Writeln("  s       search (blank = repeat last)")
+	_ = ctx.Writeln("  s       search (blank=repeat last)")
 	_ = ctx.Writeln("  l       set terminal width / height")
 	_ = ctx.Writeln("  q / c   quit back to file list")
 	s.drawPrompt(ctx)

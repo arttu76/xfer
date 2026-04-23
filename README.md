@@ -14,6 +14,7 @@ XFER is that something. Run it on your modern computer, then from the old machin
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
+- Download a file directly from a URL: the server fetches it (http/https) straight into memory and streams it to the old computer, no scratch file on disk
 - Tuned for the old terminal programs of the era (CRC16, 1 KB subpackets, 8 KB
   frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
@@ -32,13 +33,14 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.1.0 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
+xfer v1.2.0 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
 
 Usage: xfer [flags]
 
   -p, --port <number>       port to use (default: 23)
   -d, --directory <string>  directory to serve (default: current directory)
   -s, --secure              secure mode: don't allow user to change directories
+  -n, --no-url              disallow the [U]RL download option in the file listing
   -V, --version             print version and exit
   -h, --help                print this help and exit
 ```
@@ -63,20 +65,36 @@ ATDT192.168.1.194:2000
 2 ... paradroid.prg
 3 ... mule.prg
 4 ... wizball.prg
-Enter 1-4, R=refresh, X=exit: 3
-
-/Users/arttu/games/mule.prg — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: Z
+Enter 1-4, U=url, R=refresh, X=exit: 3
 Ready to download mule.prg
-MD5: 9a982e21160b982a02fd43412f14e127
+Size: 48829 bytes
+MD5:  9a982e21160b982a02fd43412f14e127
+/Users/arttu/games/mule.prg — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: Z
 Initiating ZMODEM transfer for /Users/arttu/games/mule.prg
 Please start your ZMODEM receiver NOW.
 ```
+
+Size + MD5 are shown **before** the protocol prompt so you can pick
+XMODEM for a small file or ZMODEM for a larger one without having to
+commit first.
 
 For ZMODEM, most terminals (Term 4.8, NComm, SyncTerm, etc.) auto-detect
 and start receiving. For XMODEM you need to manually trigger the receive
 in your terminal program.
 
 You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browse files and not to move to another directory)
+
+### Downloading from a URL
+
+You don't have to pre-stage a file on the host's disk. Press **U** at the
+listing to type a URL; the server fetches it over http/https, shows the
+size and MD5, and hands off to your pick of XMODEM / ZMODEM / Kermit (or
+the viewer). The body is kept in memory — nothing is written to the
+host's disk. Submitting an empty URL takes you back to the listing; a
+failed fetch (bad host, 404, etc.) re-prompts for the URL so you can
+correct a typo.
+
+Disable this feature with `-n` / `--no-url` (see Security Notes below).
 
 ### File viewer
 
@@ -117,6 +135,7 @@ The project is written in Go and uses a modular architecture:
 - `internal/navigator/` — file browsing, listing, secure-mode path checks
 - `internal/protocol/` — XMODEM/ZMODEM/Kermit/View/cancel selection prompt
 - `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
+- `internal/urlfetch/` — http/https downloader used by the `U=url` option
 - `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
 - `internal/zmodem/` — ZMODEM sender tuned for old-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
@@ -158,6 +177,12 @@ lrzsz fileinfo format, XMODEM CRC / checksum modes and block wrap past
 - Use the `-s` (secure) flag to restrict users to the initial directory
 - All transfers and the viewer read the file into memory and stream from
   the buffer — no temporary files are written to disk
+- The URL download feature (`U` at the listing) makes the *server* perform
+  the HTTP request on its own network. A connected client can therefore ask
+  xfer to fetch any URL the host itself can reach — including machines on
+  the host's private LAN that the client couldn't normally see. If xfer
+  runs on a network where that matters, disable the feature with `-n` /
+  `--no-url`. Downloads are capped at 64 MB and carry a 30-second timeout.
 
 ## License
 

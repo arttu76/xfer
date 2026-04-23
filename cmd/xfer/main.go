@@ -14,10 +14,11 @@ import (
 	"github.com/solvalou/xfer/internal/navigator"
 	"github.com/solvalou/xfer/internal/protocol"
 	"github.com/solvalou/xfer/internal/session"
+	"github.com/solvalou/xfer/internal/urlfetch"
 	"github.com/solvalou/xfer/internal/viewer"
 )
 
-var version = "1.1.0"
+var version = "1.2.0"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")
@@ -26,6 +27,8 @@ func main() {
 	flag.StringVar(dir, "directory", "", "directory to serve (default: current directory)")
 	secure := flag.Bool("s", false, "secure mode: don't allow user to change directories")
 	flag.BoolVar(secure, "secure", false, "secure mode")
+	noURL := flag.Bool("n", false, "disallow the [U]RL download option in the file listing")
+	flag.BoolVar(noURL, "no-url", false, "disallow URL downloads")
 	showVersion := flag.Bool("V", false, "print version and exit")
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
@@ -35,6 +38,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -p, --port <number>       port to use (default: %d)\n", constants.DefaultPort)
 		fmt.Fprintf(os.Stderr, "  -d, --directory <string>  directory to serve (default: current directory)\n")
 		fmt.Fprintf(os.Stderr, "  -s, --secure              secure mode: don't allow user to change directories\n")
+		fmt.Fprintf(os.Stderr, "  -n, --no-url              disallow the [U]RL download option in the file listing\n")
 		fmt.Fprintf(os.Stderr, "  -V, --version             print version and exit\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help                print this help and exit\n")
 	}
@@ -69,7 +73,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	cfg := &session.Config{SecureMode: *secure}
+	cfg := &session.Config{SecureMode: *secure, NoURL: *noURL}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
@@ -146,6 +150,10 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
 			viewer.HandleInput(ctx, cfg, data)
 			continue
 		}
+		if ctx.Mode == session.ModeEnterURL {
+			handleURLInput(ctx, cfg, data, &inputBuffer)
+			continue
+		}
 	}
 }
 
@@ -167,6 +175,17 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 			_ = ctx.Writeln("Refreshing...")
 			navigator.ListFiles(ctx, cfg)
 			buf.Reset()
+			return
+		case 'u':
+			if cfg.NoURL {
+				// Feature disabled — silently ignore so the letter doesn't
+				// accidentally get interpreted as something else below.
+				return
+			}
+			ctx.Mode = session.ModeEnterURL
+			buf.Reset()
+			_ = ctx.Writeln("")
+			_ = ctx.Write("Enter URL (empty=back): ")
 			return
 		}
 	}
@@ -191,6 +210,55 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 		if unicode.IsDigit(r) {
 			buf.WriteRune(r)
 			_, _ = ctx.Conn.Write([]byte(string(r)))
+		}
+	}
+}
+
+// handleURLInput collects a URL one byte at a time. Enter submits; an empty
+// submission returns to the listing; otherwise we attempt the download and
+// on failure re-prompt from the same mode so the user can correct a typo
+// without having to walk out and back in.
+func handleURLInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder) {
+	for _, b := range data {
+		if b == '\r' || b == '\n' {
+			_ = ctx.Writeln("")
+			raw := strings.TrimSpace(buf.String())
+			buf.Reset()
+			if raw == "" {
+				navigator.ListFiles(ctx, cfg)
+				return
+			}
+			logger.Info(fmt.Sprintf("URL fetch: %s", raw))
+			_ = ctx.Writeln(fmt.Sprintf("Downloading %s ...", raw))
+			body, name, err := urlfetch.Fetch(raw)
+			if err != nil {
+				logger.Error(fmt.Sprintf("URL fetch failed: %v", err))
+				_ = ctx.Writeln(fmt.Sprintf("Error: %v", err))
+				_ = ctx.Write("Enter URL (empty=back): ")
+				return
+			}
+			logger.Info(fmt.Sprintf("URL fetch OK: %s (%d bytes)", name, len(body)))
+			ctx.RequestedFile = raw
+			ctx.RequestedName = name
+			ctx.RequestedBody = body
+			ctx.Mode = session.ModeConfirmTransfer
+			navigator.AnnounceBuffered(ctx)
+			protocol.ShowProtocolPrompt(ctx)
+			return
+		}
+		if (b == '\b' || b == 0x7f) && buf.Len() > 0 {
+			s := buf.String()
+			buf.Reset()
+			buf.WriteString(s[:len(s)-1])
+			_, _ = ctx.Conn.Write([]byte{'\b', ' ', '\b'})
+			continue
+		}
+		// Printable ASCII only — URLs don't legitimately contain anything
+		// below 0x20 or above 0x7e, and restricting here keeps garbled
+		// terminal escape sequences out of the buffer.
+		if b >= 0x20 && b < 0x7f {
+			buf.WriteByte(b)
+			_, _ = ctx.Conn.Write([]byte{b})
 		}
 	}
 }

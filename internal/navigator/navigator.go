@@ -1,6 +1,7 @@
 package navigator
 
 import (
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"os"
@@ -78,10 +79,18 @@ func GetEntries(ctx *session.Context, cfg *session.Config) []Entry {
 }
 
 // ListFiles prints the menu (header + numbered entries + prompt) to the client.
+// Entering the listing always discards any previously-buffered transfer body:
+// cancelled protocol prompts, finished transfers, and the "empty URL=back"
+// path all pass through here, so this is the one place that guarantees a
+// pending buffer doesn't leak into the next selection.
 func ListFiles(ctx *session.Context, cfg *session.Config) {
+	ctx.Mode = session.ModeNavigate
+	ctx.RequestedFile = ""
+	ctx.RequestedName = ""
+	ctx.RequestedBody = nil
+
 	_ = ctx.Writeln(fmt.Sprintf("----- %s -----", ctx.Path))
 
-	ctx.Mode = session.ModeNavigate
 	entries := GetEntries(ctx, cfg)
 	for i, e := range entries {
 		prefix := constants.FilePrefix
@@ -90,12 +99,29 @@ func ListFiles(ctx *session.Context, cfg *session.Config) {
 		}
 		_ = ctx.Writeln(fmt.Sprintf("%d %s %s", i+1, prefix, e.Name))
 	}
-	_ = ctx.Write(fmt.Sprintf("Enter 1-%d, R=refresh, X=exit: ", len(entries)))
+	urlHint := ""
+	if !cfg.NoURL {
+		urlHint = "U=url, "
+	}
+	_ = ctx.Write(fmt.Sprintf("Enter 1-%d, %sR=refresh, X=exit: ", len(entries), urlHint))
 }
 
-// SelectFile handles the user's numeric choice. If it refers to a directory,
-// ctx.Path is updated and the menu is re-listed. If it refers to a file,
-// ctx.Mode advances to ConfirmTransfer and onSelected is invoked.
+// AnnounceBuffered prints the "Ready to download / Size / MD5" banner once
+// a transferable body has been staged in ctx.RequestedBody (either by a
+// local pick or a URL download). Shown before the protocol prompt so the
+// user can pick a protocol with size in mind.
+func AnnounceBuffered(ctx *session.Context) {
+	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", ctx.RequestedName))
+	_ = ctx.Writeln(fmt.Sprintf("Size: %d bytes", len(ctx.RequestedBody)))
+	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(ctx.RequestedBody)))
+}
+
+// SelectFile handles the user's numeric choice. Directory: navigate and
+// re-list. File: read into memory, stage it on the context, print the
+// size/MD5 banner, then hand off to onSelected (which shows the protocol
+// prompt). Reading at selection time means transferPrelude never has to
+// touch the disk and the user sees the file size before being asked which
+// protocol to use — useful when picking XMODEM (small) vs ZMODEM (large).
 func SelectFile(ctx *session.Context, n int, cfg *session.Config, onSelected func(*session.Context)) {
 	entries := GetEntries(ctx, cfg)
 	if n < 1 || n > len(entries) {
@@ -115,8 +141,18 @@ func SelectFile(ctx *session.Context, n int, cfg *session.Config, onSelected fun
 		ListFiles(ctx, cfg)
 		return
 	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		logger.Error(fmt.Sprintf("read %s: %v", abs, err))
+		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
+		ListFiles(ctx, cfg)
+		return
+	}
 	ctx.Mode = session.ModeConfirmTransfer
 	ctx.RequestedFile = abs
+	ctx.RequestedName = sel.Name
+	ctx.RequestedBody = data
+	AnnounceBuffered(ctx)
 	if onSelected != nil {
 		onSelected(ctx)
 	}
