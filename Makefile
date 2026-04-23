@@ -2,6 +2,7 @@ VERSION ?= 1.2.0
 BINDIR = bin
 LDFLAGS = -s -w -X main.version=$(VERSION)
 GOFLAGS = -trimpath
+export CGO_ENABLED = 0
 
 .PHONY: all build test clean dist linux-amd64 linux-arm64 macos-amd64 macos-arm64 windows-amd64
 
