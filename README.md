@@ -34,7 +34,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.2.0 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
+xfer v1.2.1 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
 
 Usage: xfer [flags]
 
@@ -43,6 +43,7 @@ Usage: xfer [flags]
   -s, --secure              secure mode: don't allow user to change directories
   -n, --no-url              disallow the [U]RL download option in the file listing
   -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt
+  -w, --wirelog <path>      hexdump every wire byte to file ("-" for stderr)
   -V, --version             print version and exit
   -h, --help                print this help and exit
 ```

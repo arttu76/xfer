@@ -19,7 +19,7 @@ func firstByte(s string) byte {
 
 // ShowProtocolPrompt asks the user to choose XMODEM / ZMODEM / Kermit / View / cancel.
 func ShowProtocolPrompt(ctx *session.Context) {
-	_ = ctx.Write(fmt.Sprintf("%s — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: ", ctx.RequestedFile))
+	_ = ctx.Write(fmt.Sprintf("%s - [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: ", ctx.RequestedFile))
 }
 
 // ShowTransferComplete prints the completion line and returns to file list.

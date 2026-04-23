@@ -123,6 +123,13 @@ func (s *sender) run() error {
 		return err
 	}
 
+	// Term 4.8 (Amiga xprzmodem.library) sends ZRINIT as soon as its
+	// auto-download kicks in, but the receive window is still animating
+	// open — firing ZFILE immediately causes the first bytes to be eaten,
+	// producing a visible burst of CRC errors before the transfer recovers
+	// on retransmit. A brief pause lets the window finish initializing.
+	time.Sleep(250 * time.Millisecond)
+
 	// Send ZFILE (CRC16, lrzsz fileinfo).
 	if _, err := s.conn.Write(s.buildZfile()); err != nil {
 		return err
@@ -227,25 +234,47 @@ func (s *sender) awaitHexFrame(want byte, sniffEscctl bool) error {
 // ZABORT (the two "I don't want this file" signals Term 4.8 issues from
 // its Skip file / Skip batch buttons), returns ErrSkipped. ZFERR is a
 // fatal file error on the receiver side — surface it the same way.
+//
+// Also handles the ZFILE-got-garbled recovery path: if Term 4.8's receive
+// window eats the first ZFILE, the Amiga side either NAKs the header or
+// just keeps re-emitting its ZRINIT until we give it a fresh ZFILE. Both
+// signals cause us to resend the ZFILE (capped) so the handshake recovers
+// in a round-trip instead of hanging until the receiver's own retry
+// cycle happens to produce something we'd otherwise listen for.
 func (s *sender) waitForZrpos() (uint32, error) {
-	frame, count, err := s.awaitOneOfWithCount(FrameZRPOS, FrameZSKIP, FrameZABORT, FrameZFERR)
-	if err != nil {
-		return 0, err
+	const maxZfileResends = 8
+	resends := 0
+	for {
+		frame, count, err := s.awaitOneOfWithCount(
+			FrameZRPOS, FrameZSKIP, FrameZABORT, FrameZFERR,
+			FrameZNAK, FrameZRINIT,
+		)
+		if err != nil {
+			return 0, err
+		}
+		switch frame {
+		case FrameZRPOS:
+			return count, nil
+		case FrameZSKIP:
+			logger.Info("ZMODEM receiver sent ZSKIP — skipping file")
+			return 0, ErrSkipped
+		case FrameZABORT:
+			logger.Info("ZMODEM receiver sent ZABORT — ending session")
+			return 0, ErrSkipped
+		case FrameZFERR:
+			logger.Info("ZMODEM receiver sent ZFERR — aborting transfer")
+			return 0, ErrSkipped
+		case FrameZNAK, FrameZRINIT:
+			if resends >= maxZfileResends {
+				return 0, fmt.Errorf("ZMODEM ZFILE resend limit exceeded")
+			}
+			resends++
+			logger.Info(fmt.Sprintf("ZMODEM receiver asked to restart handshake (frame %d) — resending ZFILE (attempt %d)", frame, resends+1))
+			if _, err := s.conn.Write(s.buildZfile()); err != nil {
+				return 0, err
+			}
+		}
 	}
-	switch frame {
-	case FrameZRPOS:
-		return count, nil
-	case FrameZSKIP:
-		logger.Info("ZMODEM receiver sent ZSKIP — skipping file")
-		return 0, ErrSkipped
-	case FrameZABORT:
-		logger.Info("ZMODEM receiver sent ZABORT — ending session")
-		return 0, ErrSkipped
-	case FrameZFERR:
-		logger.Info("ZMODEM receiver sent ZFERR — aborting transfer")
-		return 0, ErrSkipped
-	}
-	return 0, fmt.Errorf("unexpected frame type %d", frame)
 }
 
 // gracefulClose emits a best-effort ZFIN + OO so the receiver sees a clean

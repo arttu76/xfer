@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/solvalou/xfer/internal/constants"
@@ -17,9 +18,10 @@ import (
 	"github.com/solvalou/xfer/internal/urlconsole"
 	"github.com/solvalou/xfer/internal/urlfetch"
 	"github.com/solvalou/xfer/internal/viewer"
+	"github.com/solvalou/xfer/internal/wirelog"
 )
 
-var version = "1.2.0"
+var version = "1.2.1"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")
@@ -32,6 +34,8 @@ func main() {
 	flag.BoolVar(noURL, "no-url", false, "disallow URL downloads")
 	noStdinURL := flag.Bool("c", false, "do not inject stdin lines into a client's URL prompt")
 	flag.BoolVar(noStdinURL, "no-stdin-url", false, "do not inject stdin lines into a client's URL prompt")
+	wireLog := flag.String("w", "", "hexdump every byte each direction to this file (\"-\" for stderr)")
+	flag.StringVar(wireLog, "wirelog", "", "hexdump every byte each direction to this file")
 	showVersion := flag.Bool("V", false, "print version and exit")
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
@@ -43,6 +47,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -s, --secure              secure mode: don't allow user to change directories\n")
 		fmt.Fprintf(os.Stderr, "  -n, --no-url              disallow the [U]RL download option in the file listing\n")
 		fmt.Fprintf(os.Stderr, "  -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt\n")
+		fmt.Fprintf(os.Stderr, "  -w, --wirelog <path>      hexdump every wire byte to file (\"-\" for stderr)\n")
 		fmt.Fprintf(os.Stderr, "  -V, --version             print version and exit\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help                print this help and exit\n")
 	}
@@ -79,6 +84,18 @@ func main() {
 
 	cfg := &session.Config{SecureMode: *secure, NoURL: *noURL}
 
+	var sink *wirelog.Sink
+	if *wireLog != "" {
+		s, err := wirelog.Open(*wireLog)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cannot open wire log %q: %v\n", *wireLog, err)
+			os.Exit(1)
+		}
+		sink = s
+		defer sink.Close()
+		logger.Info(fmt.Sprintf("Wire log active: %s", *wireLog))
+	}
+
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
@@ -108,7 +125,7 @@ func main() {
 			logger.Error(fmt.Sprintf("accept: %v", err))
 			continue
 		}
-		go handleConnection(conn, abs, cfg, reg)
+		go handleConnection(wirelog.Wrap(conn, sink, conn.RemoteAddr().String()), abs, cfg, reg)
 	}
 }
 
@@ -140,23 +157,46 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 	connDone := make(chan struct{})
 	defer close(connDone)
 
-	readCh := make(chan []byte, 4)
-	go func() {
-		defer close(readCh)
-		buf := make([]byte, 256)
-		for {
-			n, err := conn.Read(buf)
-			if err != nil {
-				return
+	// The input-reader goroutine must NOT be running concurrently with the
+	// XMODEM/ZMODEM/Kermit transfer handlers — two goroutines racing on
+	// conn.Read will split incoming packets between them, and any packet
+	// won by this goroutine is silently dropped because we're in
+	// ModeTransferFile. That manifested as Term 4.8 on the Amiga retrying
+	// its ZRINIT two or three times because the first one(s) got eaten.
+	// stop/start pairs bracket each transfer so the handler has the conn
+	// to itself.
+	var (
+		readCh     chan []byte
+		readerDone chan struct{}
+	)
+	startReader := func() {
+		readCh = make(chan []byte, 4)
+		readerDone = make(chan struct{})
+		go func(ch chan<- []byte, done chan<- struct{}) {
+			defer close(done)
+			defer close(ch)
+			buf := make([]byte, 256)
+			for {
+				n, err := conn.Read(buf)
+				if err != nil {
+					return
+				}
+				chunk := append([]byte(nil), buf[:n]...)
+				select {
+				case ch <- chunk:
+				case <-connDone:
+					return
+				}
 			}
-			chunk := append([]byte(nil), buf[:n]...)
-			select {
-			case readCh <- chunk:
-			case <-connDone:
-				return
-			}
-		}
-	}()
+		}(readCh, readerDone)
+	}
+	stopReader := func() {
+		// Deadline-in-the-past kicks the goroutine out of any pending Read.
+		_ = conn.SetReadDeadline(time.Now())
+		<-readerDone
+		_ = conn.SetReadDeadline(time.Time{})
+	}
+	startReader()
 
 	injectCh := make(chan []byte, 4)
 	var injectRegID int // 0 = not registered
@@ -212,10 +252,20 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 					protocol.ShowTransferComplete(c, cfg, name, ok, code)
 				}
 			}
+			// Each transfer takes the conn for its own protocol reader, so
+			// pause our input goroutine for the duration. Viewer uses the
+			// main-loop byte stream and doesn't need exclusive access.
+			withPause := func(f func(*session.Context)) func(*session.Context) {
+				return func(c *session.Context) {
+					stopReader()
+					f(c)
+					startReader()
+				}
+			}
 			protocol.ConfirmAndStartTransfer(ctx, string(data), cfg,
-				func(c *session.Context) { session.XmodemTransfer(c, cfg, done("XMODEM", c)) },
-				func(c *session.Context) { session.ZmodemTransfer(c, cfg, done("ZMODEM", c)) },
-				func(c *session.Context) { session.KermitTransfer(c, cfg, done("KERMIT", c)) },
+				withPause(func(c *session.Context) { session.XmodemTransfer(c, cfg, done("XMODEM", c)) }),
+				withPause(func(c *session.Context) { session.ZmodemTransfer(c, cfg, done("ZMODEM", c)) }),
+				withPause(func(c *session.Context) { session.KermitTransfer(c, cfg, done("KERMIT", c)) }),
 				func(c *session.Context) { viewer.Start(c, cfg) })
 			continue
 		}
