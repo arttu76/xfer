@@ -77,9 +77,9 @@ Initiating ZMODEM transfer for /Users/arttu/games/mule.prg
 Please start your ZMODEM receiver NOW.
 ```
 
-Size + MD5 are shown **before** the protocol prompt so you can pick
-XMODEM for a small file or ZMODEM for a larger one without having to
-commit first.
+Size and MD5 are shown **before** the protocol prompt so you can see
+how big the file is before picking a protocol — XMODEM is fine for
+small files, ZMODEM is much faster on larger ones.
 
 For ZMODEM, most terminals (Term 4.8, NComm, SyncTerm, etc.) auto-detect
 and start receiving. For XMODEM you need to manually trigger the receive
