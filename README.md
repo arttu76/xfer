@@ -2,9 +2,9 @@
 
 ## Overview
 
-If you have a wifi modem for an old computer (such as [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)), you might need a software to be run on a modern "host" computer that allows the old computer browse and download files from the "host" computer.
+Getting files *onto* a retro computer is the hard part — floppies rot, serial cables are fiddly, and most vintage machines can't talk to modern networks on their own. A wifi modem (such as the [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)) solves the networking side, but the retro machine still needs something on the other end of the connection to serve the files.
 
-XFER is such a program: run it on your computer, connect from your retro computer's terminal program and download any files you like.
+XFER is that something. Run it on your modern computer, then from the retro machine's terminal program "dial" into it over the wifi modem: browse the modern computer's file system, view files inline, and download any of them to the retro side using XMODEM, ZMODEM, or Kermit.
 
 ## Features
 
