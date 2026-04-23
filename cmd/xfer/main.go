@@ -130,25 +130,16 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
 			continue
 		}
 		if ctx.Mode == session.ModeConfirmTransfer {
+			done := func(name string, c *session.Context) session.OnDone {
+				return func(ok bool, code int) {
+					protocol.ShowTransferComplete(c, cfg, name, ok, code)
+				}
+			}
 			protocol.ConfirmAndStartTransfer(ctx, string(data), cfg,
-				func(c *session.Context) {
-					session.XmodemTransfer(c, cfg, func(ok bool, code int) {
-						protocol.ShowTransferComplete(c, cfg, "XMODEM", ok, code)
-					})
-				},
-				func(c *session.Context) {
-					session.ZmodemTransfer(c, cfg, func(ok bool) {
-						protocol.ShowTransferComplete(c, cfg, "ZMODEM", ok, 0)
-					})
-				},
-				func(c *session.Context) {
-					session.KermitTransfer(c, cfg, func(ok bool) {
-						protocol.ShowTransferComplete(c, cfg, "KERMIT", ok, 0)
-					})
-				},
-				func(c *session.Context) {
-					viewer.Start(c, cfg)
-				})
+				func(c *session.Context) { session.XmodemTransfer(c, cfg, done("XMODEM", c)) },
+				func(c *session.Context) { session.ZmodemTransfer(c, cfg, done("ZMODEM", c)) },
+				func(c *session.Context) { session.KermitTransfer(c, cfg, done("KERMIT", c)) },
+				func(c *session.Context) { viewer.Start(c, cfg) })
 			continue
 		}
 		if ctx.Mode == session.ModeView {

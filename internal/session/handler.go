@@ -20,9 +20,21 @@ import (
 // session — the per-connection state machine below is therefore invoked
 // *from* those packages via HandleConnection in cmd/xfer/main.go.
 
-// XmodemTransfer reads the requested file and pushes it to the client via
-// XMODEM. Emits structured progress log lines every few seconds.
-func XmodemTransfer(ctx *Context, _ *Config, onDone func(success bool, exitCode int)) {
+// All three transfer functions share a common shape: set mode, announce
+// the file with MD5 / size, then hand the socket to the protocol sender.
+// The prelude below captures that shared piece and is the single place
+// that emits the "Ready to download / Size / MD5 / Initiating" banner.
+
+// OnDone is the completion callback for every transfer. exitCode follows
+// the XMODEM convention (0 = success, non-zero = failure); for ZMODEM
+// and Kermit we use 0/1 since they don't have a protocol-level code.
+type OnDone func(success bool, exitCode int)
+
+// transferPrelude sets transfer mode, reads the file, writes the common
+// banner, and returns the file bytes plus basename. On error the caller's
+// onDone is invoked (when non-nil) and err is returned so the transfer
+// function can bail out.
+func transferPrelude(ctx *Context, protoName string, onDone OnDone) ([]byte, string, error) {
 	ctx.Mode = ModeTransferFile
 	_ = ctx.Writeln("")
 
@@ -31,28 +43,39 @@ func XmodemTransfer(ctx *Context, _ *Config, onDone func(success bool, exitCode 
 		if onDone != nil {
 			onDone(false, -1)
 		}
-		return
+		return nil, "", errors.New("no file selected for transfer")
 	}
 
 	data, err := os.ReadFile(ctx.RequestedFile)
 	if err != nil {
-		logger.TransferStatus("XMODEM", fmt.Sprintf("Error reading file: %v", err))
+		logger.TransferStatus(protoName, fmt.Sprintf("Error reading file: %v", err))
 		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
 		if onDone != nil {
 			onDone(false, -1)
 		}
-		return
+		return nil, "", err
 	}
 
 	name := filepath.Base(ctx.RequestedFile)
-	blocks := (len(data) + 127) / 128
-	if blocks == 0 {
-		blocks = 1
-	}
 	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
 	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
 	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
-	_ = ctx.Writeln(fmt.Sprintf("Initiating XMODEM transfer for %s", ctx.RequestedFile))
+	_ = ctx.Writeln(fmt.Sprintf("Initiating %s transfer for %s", protoName, ctx.RequestedFile))
+	return data, name, nil
+}
+
+// XmodemTransfer reads the requested file and pushes it to the client via
+// XMODEM. Emits structured progress log lines every few seconds.
+func XmodemTransfer(ctx *Context, _ *Config, onDone OnDone) {
+	data, _, err := transferPrelude(ctx, "XMODEM", onDone)
+	if err != nil {
+		return
+	}
+
+	blocks := (len(data) + xmodem.BlockSize - 1) / xmodem.BlockSize
+	if blocks == 0 {
+		blocks = 1
+	}
 	_ = ctx.Writeln(fmt.Sprintf("Please start your XMODEM receiver NOW for %d blocks.", blocks))
 
 	startedAt := time.Now()
@@ -97,31 +120,11 @@ func XmodemTransfer(ctx *Context, _ *Config, onDone func(success bool, exitCode 
 }
 
 // ZmodemTransfer reads the requested file and pushes it via ZMODEM.
-func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
-	ctx.Mode = ModeTransferFile
-	_ = ctx.Writeln("")
-
-	if ctx.RequestedFile == "" {
-		_ = ctx.Writeln("Error: No file selected for transfer")
-		if onDone != nil {
-			onDone(false)
-		}
-		return
-	}
-	data, err := os.ReadFile(ctx.RequestedFile)
+func ZmodemTransfer(ctx *Context, _ *Config, onDone OnDone) {
+	data, name, err := transferPrelude(ctx, "ZMODEM", onDone)
 	if err != nil {
-		logger.TransferStatus("ZMODEM", fmt.Sprintf("Error reading file: %v", err))
-		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
-		if onDone != nil {
-			onDone(false)
-		}
 		return
 	}
-	name := filepath.Base(ctx.RequestedFile)
-	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
-	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
-	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
-	_ = ctx.Writeln(fmt.Sprintf("Initiating ZMODEM transfer for %s", ctx.RequestedFile))
 	_ = ctx.Writeln("Please start your ZMODEM receiver NOW.")
 
 	// Flush pause so retro terminals' host monitors don't swallow the MD5
@@ -134,7 +137,7 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 	if err == nil {
 		logger.TransferStatus("ZMODEM", "Transfer completed successfully")
 		if onDone != nil {
-			onDone(true)
+			onDone(true, 0)
 		}
 		return
 	}
@@ -151,36 +154,16 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 		logger.TransferStatus("ZMODEM", err.Error())
 	}
 	if onDone != nil {
-		onDone(false)
+		onDone(false, 1)
 	}
 }
 
 // KermitTransfer reads the requested file and pushes it via classic Kermit.
-func KermitTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
-	ctx.Mode = ModeTransferFile
-	_ = ctx.Writeln("")
-
-	if ctx.RequestedFile == "" {
-		_ = ctx.Writeln("Error: No file selected for transfer")
-		if onDone != nil {
-			onDone(false)
-		}
-		return
-	}
-	data, err := os.ReadFile(ctx.RequestedFile)
+func KermitTransfer(ctx *Context, _ *Config, onDone OnDone) {
+	data, name, err := transferPrelude(ctx, "KERMIT", onDone)
 	if err != nil {
-		logger.TransferStatus("KERMIT", fmt.Sprintf("Error reading file: %v", err))
-		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
-		if onDone != nil {
-			onDone(false)
-		}
 		return
 	}
-	name := filepath.Base(ctx.RequestedFile)
-	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
-	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
-	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
-	_ = ctx.Writeln(fmt.Sprintf("Initiating KERMIT transfer for %s", ctx.RequestedFile))
 	_ = ctx.Writeln("Please start your Kermit receiver NOW (classic short packets, no windowing).")
 
 	time.Sleep(500 * time.Millisecond)
@@ -229,13 +212,13 @@ func KermitTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 			_ = ctx.Writeln("      in your receiver's download directory before starting the transfer.")
 		}
 		if onDone != nil {
-			onDone(false)
+			onDone(false, 1)
 		}
 		return
 	}
 	logger.TransferStatus("KERMIT", "Transfer completed successfully")
 	if onDone != nil {
-		onDone(true)
+		onDone(true, 0)
 	}
 }
 
