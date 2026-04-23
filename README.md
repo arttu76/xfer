@@ -15,6 +15,7 @@ XFER is that something. Run it on your modern computer, then from the old machin
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
 - Download a file directly from a URL: the server fetches it (http/https) straight into memory and streams it to the old computer, no scratch file on disk
+- Paste long URLs into the server's own keyboard instead of typing them on the old terminal; both sides can type, first Enter wins (opt out with `--no-stdin-url`)
 - Tuned for the old terminal programs of the era (CRC16, 1 KB subpackets, 8 KB
   frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
@@ -41,6 +42,7 @@ Usage: xfer [flags]
   -d, --directory <string>  directory to serve (default: current directory)
   -s, --secure              secure mode: don't allow user to change directories
   -n, --no-url              disallow the [U]RL download option in the file listing
+  -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt
   -V, --version             print version and exit
   -h, --help                print this help and exit
 ```
@@ -96,6 +98,17 @@ correct a typo.
 
 Disable this feature with `-n` / `--no-url` (see Security Notes below).
 
+**Typing the URL on the server.** Typing a long URL on a retro keyboard is
+miserable, so xfer also reads its own stdin: while a client is sitting at
+the URL prompt, you can paste the URL into xfer's terminal and press Enter.
+The characters show up on the client's screen as if they'd typed them, and
+the download proceeds normally. Only one session at a time receives
+server-side paste (the one that pressed `U` first); any other sessions in
+URL mode must type on their own telnet connection. If stdin is closed
+(systemd, `< /dev/null`, daemonised) the feature is silently inert. Turn
+it off explicitly with `-c` / `--no-stdin-url` if you want to type
+unrelated things into the server console.
+
 ### File viewer
 
 Instead of downloading a file, pick **V** at the transfer prompt to view
@@ -136,6 +149,7 @@ The project is written in Go and uses a modular architecture:
 - `internal/protocol/` — XMODEM/ZMODEM/Kermit/View/cancel selection prompt
 - `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
 - `internal/urlfetch/` — http/https downloader used by the `U=url` option
+- `internal/urlconsole/` — registry + stdin reader for server-side URL paste
 - `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
 - `internal/zmodem/` — ZMODEM sender tuned for old-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz

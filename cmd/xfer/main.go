@@ -14,6 +14,7 @@ import (
 	"github.com/solvalou/xfer/internal/navigator"
 	"github.com/solvalou/xfer/internal/protocol"
 	"github.com/solvalou/xfer/internal/session"
+	"github.com/solvalou/xfer/internal/urlconsole"
 	"github.com/solvalou/xfer/internal/urlfetch"
 	"github.com/solvalou/xfer/internal/viewer"
 )
@@ -29,6 +30,8 @@ func main() {
 	flag.BoolVar(secure, "secure", false, "secure mode")
 	noURL := flag.Bool("n", false, "disallow the [U]RL download option in the file listing")
 	flag.BoolVar(noURL, "no-url", false, "disallow URL downloads")
+	noStdinURL := flag.Bool("c", false, "do not inject stdin lines into a client's URL prompt")
+	flag.BoolVar(noStdinURL, "no-stdin-url", false, "do not inject stdin lines into a client's URL prompt")
 	showVersion := flag.Bool("V", false, "print version and exit")
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
@@ -39,6 +42,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -d, --directory <string>  directory to serve (default: current directory)\n")
 		fmt.Fprintf(os.Stderr, "  -s, --secure              secure mode: don't allow user to change directories\n")
 		fmt.Fprintf(os.Stderr, "  -n, --no-url              disallow the [U]RL download option in the file listing\n")
+		fmt.Fprintf(os.Stderr, "  -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt\n")
 		fmt.Fprintf(os.Stderr, "  -V, --version             print version and exit\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help                print this help and exit\n")
 	}
@@ -89,20 +93,35 @@ func main() {
 	}
 	logger.Info(fmt.Sprintf("Server now listening on %s", strings.Join(endpoints, " / ")))
 
+	// Set up the server-side URL-paste registry. The Run loop reads stdin
+	// line by line and forwards each line to whichever client is in URL
+	// mode; if stdin is closed (daemon, </dev/null) Scanner returns cleanly
+	// so the goroutine just exits.
+	reg := urlconsole.NewRegistry(logger.Info)
+	if !*noStdinURL {
+		go urlconsole.Run(reg, os.Stdin)
+	}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			logger.Error(fmt.Sprintf("accept: %v", err))
 			continue
 		}
-		go handleConnection(conn, abs, cfg)
+		go handleConnection(conn, abs, cfg, reg)
 	}
 }
 
 // handleConnection drives one client through the state machine —
 // navigate → confirm → transfer (or view, or URL entry) → back to the
 // listing — dispatching each read to the handler for the current mode.
-func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
+//
+// Reads are lifted into a dedicated goroutine + buffered channel so the
+// main loop can select over both the client's input and a second stream
+// of bytes injected by the server-side URL paste feature. The dedicated
+// reader lets either source wake up the dispatcher without the other
+// having to cooperate.
+func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, reg *urlconsole.Registry) {
 	defer conn.Close()
 	logger.Info("Client connected")
 	defer logger.Info("Client disconnected")
@@ -115,19 +134,74 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
 	navigator.ListFiles(ctx, cfg)
 
 	var inputBuffer strings.Builder
-	buf := make([]byte, 256)
+
+	// connDone is closed when this function returns so the reader goroutine
+	// unblocks even if it's parked waiting to send into readCh.
+	connDone := make(chan struct{})
+	defer close(connDone)
+
+	readCh := make(chan []byte, 4)
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 256)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			chunk := append([]byte(nil), buf[:n]...)
+			select {
+			case readCh <- chunk:
+			case <-connDone:
+				return
+			}
+		}
+	}()
+
+	injectCh := make(chan []byte, 4)
+	var injectRegID int // 0 = not registered
+	defer func() {
+		if injectRegID != 0 {
+			reg.Deregister(injectRegID)
+		}
+	}()
 
 	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			return
+		// Keep the registry entry in sync with the current mode. Entering
+		// URL mode registers us so the server's stdin can inject into this
+		// session; leaving deregisters so stdin flows elsewhere (or nowhere).
+		switch {
+		case ctx.Mode == session.ModeEnterURL && injectRegID == 0:
+			injectRegID = reg.Register(injectCh)
+			logger.Info(fmt.Sprintf("session #%d waiting for URL — paste here or type on the client", injectRegID))
+		case ctx.Mode != session.ModeEnterURL && injectRegID != 0:
+			reg.Deregister(injectRegID)
+			injectRegID = 0
 		}
+
+		// A nil channel blocks forever in select, so conditionally enable
+		// the inject branch only while in URL mode.
+		var injectSrc <-chan []byte
+		if ctx.Mode == session.ModeEnterURL {
+			injectSrc = injectCh
+		}
+
+		var data []byte
+		select {
+		case d, ok := <-readCh:
+			if !ok {
+				return // peer disconnected
+			}
+			data = d
+		case d := <-injectSrc:
+			data = d
+		}
+
 		if ctx.Mode == session.ModeTransferFile {
 			// Transfers own the socket while running; if bytes land here it
 			// means the handler exited without restoring mode. Discard.
 			continue
 		}
-		data := buf[:n]
 		if ctx.Mode == session.ModeNavigate {
 			handleNavigateInput(ctx, cfg, data, &inputBuffer)
 			continue
