@@ -82,8 +82,8 @@ how big the file is before picking a protocol — XMODEM is fine for
 small files, ZMODEM is much faster on larger ones.
 
 For ZMODEM, most terminals (Term 4.8, NComm, SyncTerm, etc.) auto-detect
-and start receiving. For XMODEM you need to manually trigger the receive
-in your terminal program.
+and start receiving. For XMODEM and Kermit you need to manually trigger
+the receive in your terminal program.
 
 You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browse files and not to move to another directory)
 
