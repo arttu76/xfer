@@ -17,9 +17,9 @@ func firstByte(s string) byte {
 	return s[0]
 }
 
-// ShowProtocolPrompt asks the user to choose XMODEM / ZMODEM / Kermit / cancel.
+// ShowProtocolPrompt asks the user to choose XMODEM / ZMODEM / Kermit / View / cancel.
 func ShowProtocolPrompt(ctx *session.Context) {
-	_ = ctx.Write(fmt.Sprintf("Transfer %s via [X]MODEM, [Z]MODEM, [K]ermit, or [C]ancel?: ", ctx.RequestedFile))
+	_ = ctx.Write(fmt.Sprintf("%s — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: ", ctx.RequestedFile))
 }
 
 // ShowTransferComplete prints the completion line and returns to file list.
@@ -44,7 +44,8 @@ func ShowTransferComplete(ctx *session.Context, cfg *session.Config, proto strin
 }
 
 // ConfirmAndStartTransfer routes based on the first sanitized character of
-// the user's reply: x → XMODEM, z → ZMODEM, c/n → cancel, else re-prompt.
+// the user's reply: x → XMODEM, z → ZMODEM, k → Kermit, v → View,
+// c/n → cancel, else re-prompt.
 func ConfirmAndStartTransfer(
 	ctx *session.Context,
 	input string,
@@ -52,6 +53,7 @@ func ConfirmAndStartTransfer(
 	startX func(*session.Context),
 	startZ func(*session.Context),
 	startK func(*session.Context),
+	startV func(*session.Context),
 ) {
 	switch firstByte(strings.ToLower(strings.TrimSpace(input))) {
 	case 0:
@@ -72,11 +74,16 @@ func ConfirmAndStartTransfer(
 		if startK != nil {
 			startK(ctx)
 		}
+	case 'v':
+		_ = ctx.Writeln("VIEW")
+		if startV != nil {
+			startV(ctx)
+		}
 	case 'c', 'n':
 		_ = ctx.Writeln("Cancelled")
 		navigator.ListFiles(ctx, cfg)
 	default:
-		_ = ctx.Writeln("Invalid option. Please enter X, Z, K, or C.")
+		_ = ctx.Writeln("Invalid option. Please enter X, Z, K, V, or C.")
 		ShowProtocolPrompt(ctx)
 	}
 }

@@ -8,6 +8,7 @@ const (
 	ModeNavigate Mode = iota
 	ModeConfirmTransfer
 	ModeTransferFile
+	ModeView
 )
 
 type Context struct {
@@ -15,6 +16,9 @@ type Context struct {
 	Path          string
 	Conn          net.Conn
 	RequestedFile string
+	// View holds opaque per-connection state while Mode == ModeView.
+	// The session package never inspects it; the viewer package owns the type.
+	View any
 }
 
 type Config struct {

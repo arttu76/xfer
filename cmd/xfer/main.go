@@ -14,9 +14,10 @@ import (
 	"github.com/solvalou/xfer/internal/navigator"
 	"github.com/solvalou/xfer/internal/protocol"
 	"github.com/solvalou/xfer/internal/session"
+	"github.com/solvalou/xfer/internal/viewer"
 )
 
-const version = "1.0.9"
+const version = "1.1.0"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")
@@ -29,7 +30,7 @@ func main() {
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "xfer v%s — XMODEM / ZMODEM / Kermit file server for retro computers\n\n", version)
+		fmt.Fprintf(os.Stderr, "xfer v%s — XMODEM / ZMODEM / Kermit file server + viewer for retro computers\n\n", version)
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  -p, --port <number>       port to use (default: %d)\n", constants.DefaultPort)
 		fmt.Fprintf(os.Stderr, "  -d, --directory <string>  directory to serve (default: current directory)\n")
@@ -144,7 +145,14 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
 					session.KermitTransfer(c, cfg, func(ok bool) {
 						protocol.ShowTransferComplete(c, cfg, "KERMIT", ok, 0)
 					})
+				},
+				func(c *session.Context) {
+					viewer.Start(c, cfg)
 				})
+			continue
+		}
+		if ctx.Mode == session.ModeView {
+			viewer.HandleInput(ctx, cfg, data)
 			continue
 		}
 	}

@@ -13,6 +13,7 @@ XFER is such a program: run it on your computer, connect from your retro compute
 - File transfer using XMODEM protocol (very slow but maximally compatible)
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
+- Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
 - Tuned for retro terminals on old computers (CRC16, 1 KB subpackets, 8 KB
   frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
@@ -31,7 +32,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.0.9 — XMODEM / ZMODEM / Kermit file server for retro computers
+xfer v1.1.0 — XMODEM / ZMODEM / Kermit file server + viewer for retro computers
 
 Usage: xfer [flags]
 
@@ -64,7 +65,7 @@ ATDT192.168.1.194:2000
 4 ... wizball.prg
 Enter 1-4, R=refresh, X=exit: 3
 
-Transfer /Users/arttu/games/mule.prg via [X]MODEM, [Z]MODEM, or [C]ancel?: Z
+/Users/arttu/games/mule.prg — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: Z
 Ready to download mule.prg
 MD5: 9a982e21160b982a02fd43412f14e127
 Initiating ZMODEM transfer for /Users/arttu/games/mule.prg
@@ -76,6 +77,22 @@ and start receiving. For XMODEM you need to manually trigger the receive
 in your terminal program.
 
 You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browse files and not to move to another directory)
+
+### File viewer
+
+Instead of downloading a file, pick **V** at the transfer prompt to view
+it inline. The viewer auto-detects text vs binary and picks char or hex
+display accordingly. Single-keystroke controls (no arrow keys needed):
+
+| key       | action                                       |
+|-----------|----------------------------------------------|
+| `f` / `b` | scroll one line forward / back               |
+| `d` / `u` | scroll one page down / up (SPACE = `d`)      |
+| `m`       | toggle hex / char display                    |
+| `s`       | search; empty input repeats the last search  |
+| `l`       | set terminal width (default 40) and height (default 20) so the viewer lays out correctly on your terminal |
+| `q` / `c` | quit back to the file list                   |
+| `?`       | show help                                    |
 
 ### 3. That's it!
 
@@ -98,7 +115,8 @@ The project is written in Go and uses a modular architecture:
 - `cmd/xfer/` — CLI entry point, flag parsing, TCP accept loop
 - `internal/session/` — per-connection state machine and transfer handlers
 - `internal/navigator/` — file browsing, listing, secure-mode path checks
-- `internal/protocol/` — XMODEM/ZMODEM/Kermit/cancel selection prompt
+- `internal/protocol/` — XMODEM/ZMODEM/Kermit/View/cancel selection prompt
+- `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
 - `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
 - `internal/zmodem/` — ZMODEM sender tuned for retro-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
