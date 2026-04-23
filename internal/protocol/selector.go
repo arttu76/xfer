@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/solvalou/xfer/internal/logger"
 	"github.com/solvalou/xfer/internal/navigator"
@@ -16,13 +17,18 @@ func firstByte(s string) byte {
 	return s[0]
 }
 
-// ShowProtocolPrompt asks the user to choose XMODEM / ZMODEM / cancel.
+// ShowProtocolPrompt asks the user to choose XMODEM / ZMODEM / Kermit / cancel.
 func ShowProtocolPrompt(ctx *session.Context) {
-	_ = ctx.Write(fmt.Sprintf("Transfer %s via [X]MODEM, [Z]MODEM, or [C]ancel?: ", ctx.RequestedFile))
+	_ = ctx.Write(fmt.Sprintf("Transfer %s via [X]MODEM, [Z]MODEM, [K]ermit, or [C]ancel?: ", ctx.RequestedFile))
 }
 
 // ShowTransferComplete prints the completion line and returns to file list.
+// Pauses first so terminal emulators (minicom, c-kermit CONNECT) have time
+// to return from their post-transfer dialog/state — otherwise the whole
+// completion message + listing lands during the client's protocol→terminal
+// transition and gets dropped or overdrawn, forcing the user to press R.
 func ShowTransferComplete(ctx *session.Context, cfg *session.Config, proto string, success bool, exitCode int) {
+	time.Sleep(750 * time.Millisecond)
 	_ = ctx.Writeln("")
 	_ = ctx.Writeln("")
 	if success {
@@ -45,6 +51,7 @@ func ConfirmAndStartTransfer(
 	cfg *session.Config,
 	startX func(*session.Context),
 	startZ func(*session.Context),
+	startK func(*session.Context),
 ) {
 	switch firstByte(strings.ToLower(strings.TrimSpace(input))) {
 	case 0:
@@ -60,11 +67,16 @@ func ConfirmAndStartTransfer(
 		if startZ != nil {
 			startZ(ctx)
 		}
+	case 'k':
+		_ = ctx.Writeln("KERMIT")
+		if startK != nil {
+			startK(ctx)
+		}
 	case 'c', 'n':
 		_ = ctx.Writeln("Cancelled")
 		navigator.ListFiles(ctx, cfg)
 	default:
-		_ = ctx.Writeln("Invalid option. Please enter X, Z, or C.")
+		_ = ctx.Writeln("Invalid option. Please enter X, Z, K, or C.")
 		ShowProtocolPrompt(ctx)
 	}
 }

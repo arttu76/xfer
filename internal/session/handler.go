@@ -7,8 +7,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/solvalou/xfer/internal/kermit"
 	"github.com/solvalou/xfer/internal/logger"
 	"github.com/solvalou/xfer/internal/xmodem"
 	"github.com/solvalou/xfer/internal/zmodem"
@@ -150,6 +152,90 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
 	}
 	if onDone != nil {
 		onDone(false)
+	}
+}
+
+// KermitTransfer reads the requested file and pushes it via classic Kermit.
+func KermitTransfer(ctx *Context, _ *Config, onDone func(success bool)) {
+	ctx.Mode = ModeTransferFile
+	_ = ctx.Writeln("")
+
+	if ctx.RequestedFile == "" {
+		_ = ctx.Writeln("Error: No file selected for transfer")
+		if onDone != nil {
+			onDone(false)
+		}
+		return
+	}
+	data, err := os.ReadFile(ctx.RequestedFile)
+	if err != nil {
+		logger.TransferStatus("KERMIT", fmt.Sprintf("Error reading file: %v", err))
+		_ = ctx.Writeln(fmt.Sprintf("Error reading file: %v", err))
+		if onDone != nil {
+			onDone(false)
+		}
+		return
+	}
+	name := filepath.Base(ctx.RequestedFile)
+	_ = ctx.Writeln(fmt.Sprintf("Ready to download %s", name))
+	_ = ctx.Writeln(fmt.Sprintf("Size: %s", humanBytes(len(data))))
+	_ = ctx.Writeln(fmt.Sprintf("MD5:  %x", md5.Sum(data)))
+	_ = ctx.Writeln(fmt.Sprintf("Initiating KERMIT transfer for %s", ctx.RequestedFile))
+	_ = ctx.Writeln("Please start your Kermit receiver NOW (classic short packets, no windowing).")
+
+	time.Sleep(500 * time.Millisecond)
+
+	startedAt := time.Now()
+	lastLoggedAt := startedAt
+
+	cfg := kermit.Config{
+		ReadTimeout: 10 * time.Second,
+		OnStart: func() {
+			logger.TransferStatus("KERMIT", fmt.Sprintf("Transfer started for %s", ctx.RequestedFile))
+		},
+		OnStatus: func(evt kermit.StatusEvent) {
+			now := time.Now()
+			if now.Sub(lastLoggedAt) < 5*time.Second {
+				return
+			}
+			elapsed := now.Sub(startedAt).Seconds()
+			if elapsed <= 0 {
+				return
+			}
+			bps := int(float64(evt.BytesSent) / elapsed)
+			pct := 0
+			if evt.TotalBytes > 0 {
+				pct = evt.BytesSent * 100 / evt.TotalBytes
+			}
+			logger.TransferStatus("KERMIT",
+				fmt.Sprintf("Transferred %d/%d bytes (%d%%) - %dB/sec",
+					evt.BytesSent, evt.TotalBytes, pct, bps))
+			lastLoggedAt = now
+		},
+	}
+
+	err = kermit.Send(connAdapter{ctx.Conn}, data, name, cfg)
+	if err != nil {
+		logger.TransferStatus("KERMIT", err.Error())
+		// Surface the error on the client terminal too — by the time the
+		// sender saw an E packet the peer has usually exited its Kermit mode,
+		// so these bytes land in the host terminal (minicom / screen / etc.).
+		_ = ctx.Writeln("")
+		_ = ctx.Writeln(fmt.Sprintf("Transfer failed: %v", err))
+		if strings.Contains(err.Error(), "Write access denied") {
+			_ = ctx.Writeln("Hint: some Kermit builds (incl. C-Kermit 9.0.302 on macOS) report")
+			_ = ctx.Writeln("      \"Write access denied\" when the target file doesn't yet exist.")
+			_ = ctx.Writeln("      Workaround: `touch` an empty file with the expected uppercase name")
+			_ = ctx.Writeln("      in your receiver's download directory before starting the transfer.")
+		}
+		if onDone != nil {
+			onDone(false)
+		}
+		return
+	}
+	logger.TransferStatus("KERMIT", "Transfer completed successfully")
+	if onDone != nil {
+		onDone(true)
 	}
 }
 

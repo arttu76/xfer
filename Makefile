@@ -1,4 +1,4 @@
-VERSION ?= 1.0.8
+VERSION ?= 1.0.9
 BINDIR = bin
 LDFLAGS = -s -w -X main.version=$(VERSION)
 GOFLAGS = -trimpath

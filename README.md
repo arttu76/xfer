@@ -12,6 +12,7 @@ XFER is such a program: run it on your computer, connect from your retro compute
 - Allows browsing of the host file system
 - File transfer using XMODEM protocol (very slow but maximally compatible)
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
+- File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Tuned for retro terminals on old computers (CRC16, 1 KB subpackets, 8 KB
   frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
@@ -30,7 +31,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.0.7 — XMODEM / ZMODEM file server for retro computers
+xfer v1.0.9 — XMODEM / ZMODEM / Kermit file server for retro computers
 
 Usage: xfer [flags]
 
@@ -97,11 +98,14 @@ The project is written in Go and uses a modular architecture:
 - `cmd/xfer/` — CLI entry point, flag parsing, TCP accept loop
 - `internal/session/` — per-connection state machine and transfer handlers
 - `internal/navigator/` — file browsing, listing, secure-mode path checks
-- `internal/protocol/` — XMODEM/ZMODEM/cancel selection prompt
+- `internal/protocol/` — XMODEM/ZMODEM/Kermit/cancel selection prompt
 - `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
 - `internal/zmodem/` — ZMODEM sender tuned for retro-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
   fileinfo, `rz\r` trigger, 5×CAN cancel)
+- `internal/kermit/` — Kermit sender: long packets, type-1/2/3 block checks
+  (CRC-16-Kermit), 8-bit quoting, run-length encoding, and sliding-window
+  flow control — feature set negotiated from the receiver's S-ACK
 - `internal/logger/` — timestamped stderr logging
 - `internal/testutil/` — shared loopback / capture / golden-diff helpers for tests
 - `internal/constants/` — CLI defaults and menu prefixes
