@@ -1,4 +1,4 @@
-# XFER - File Transfer Server for Retro Computers
+# XFER - File Transfer Server for Old Computers
 
 ## Overview
 
@@ -14,7 +14,7 @@ XFER is that something. Run it on your modern computer, then from the old machin
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
-- Tuned for retro terminals on old computers (CRC16, 1 KB subpackets, 8 KB
+- Tuned for the old terminal programs of the era (CRC16, 1 KB subpackets, 8 KB
   frames, lrzsz-style ZFILE metadata, ESCCTL negotiation, CAN-burst cancel)
 - Shows an MD5 of the file before the transfer so you can verify integrity
 - Secure mode to restrict directory access
@@ -32,7 +32,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.1.0 — XMODEM / ZMODEM / Kermit file server + viewer for retro computers
+xfer v1.1.0 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
 
 Usage: xfer [flags]
 
@@ -118,7 +118,7 @@ The project is written in Go and uses a modular architecture:
 - `internal/protocol/` — XMODEM/ZMODEM/Kermit/View/cancel selection prompt
 - `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
 - `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
-- `internal/zmodem/` — ZMODEM sender tuned for retro-terminal compatibility
+- `internal/zmodem/` — ZMODEM sender tuned for old-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
   fileinfo, `rz\r` trigger, 5×CAN cancel)
 - `internal/kermit/` — Kermit sender: long packets, type-1/2/3 block checks
@@ -142,7 +142,7 @@ $ make test             # run the test suite
 The XMODEM and ZMODEM packages each include a byte-level wire-format test
 that compares the sender's output against a committed golden dump in
 `test/golden/`. The goldens were captured from a known-good session that
-had been tested against real retro terminals (Term 4.8 on Amiga, lrzsz on
+had been tested against real old terminals (Term 4.8 on Amiga, lrzsz on
 Linux, SyncTerm, NComm), so passing them proves wire-format compatibility
 with those receivers byte-for-byte.
 

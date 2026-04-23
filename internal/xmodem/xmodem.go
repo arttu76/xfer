@@ -120,7 +120,7 @@ func waitForStart(conn deadlineConn, timeout time.Duration) (mode, error) {
 			return 0, err
 		}
 		// Accept the start byte whether or not the 8th bit happens to be
-		// set — some retro terminals run in 7-bit mode with the parity bit
+		// set — some old terminals run in 7-bit mode with the parity bit
 		// stuck high, and the standard is silent on the top bit anyway.
 		switch buf[0] & 0x7f {
 		case NAK:

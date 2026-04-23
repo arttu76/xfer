@@ -4,7 +4,7 @@ package zmodem
 // ZRINIT hex header. Returns (escctlRequested, foundZrinit). Tolerates
 // leading junk bytes and partial frames arriving across multiple reads.
 //
-// ESCCTL negotiation matters because retro terminals (Amiga Term 4.8,
+// ESCCTL negotiation matters because old terminals (Amiga Term 4.8,
 // NComm, xprzmodem.library) hang when we emit ZDLE-escaped control bytes
 // they didn't ask for; lrzsz --escape hangs when we fail to emit the ones
 // it did ask for.

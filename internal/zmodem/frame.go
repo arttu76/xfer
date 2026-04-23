@@ -1,5 +1,6 @@
-// Package zmodem implements a ZMODEM file-transfer sender, tuned for retro
-// terminals. The wire-format primitives (frame headers, ZDLE escape table,
+// Package zmodem implements a ZMODEM file-transfer sender, tuned for old
+// terminal programs (Amiga Term 4.8, NComm, xprzmodem.library, lrzsz,
+// SyncTerm). The wire-format primitives (frame headers, ZDLE escape table,
 // CRC16) live in this file; the state machine lives in sender.go.
 //
 // Reference: Chuck Forsberg, "The ZMODEM Inter Application File Transfer

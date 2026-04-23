@@ -353,7 +353,7 @@ func (s *sender) streamData(startOffset uint32) error {
 		// A ZCRCW terminator always requests a response from the receiver:
 		// ZACK on success, ZRPOS(offset) when a subpacket CRC failed, or
 		// ZNAK when the ZDATA header itself was garbled. Waiting also keeps
-		// retro receivers (Term 4.8 / NComm) in step — they NAK a premature
+		// old receivers (Term 4.8 / NComm) in step — they NAK a premature
 		// ZEOF if the last subpacket isn't acknowledged first.
 		resp, err := s.awaitBurstResponse()
 		if err != nil {
@@ -408,7 +408,7 @@ func (s *sender) awaitBurstResponse() (burstResponse, error) {
 
 // awaitOneOfWithCount scans incoming bytes for any frame whose type appears
 // in `wants` and returns (frame, 32-bit count/offset payload). Accepts both
-// ZHEX and ZBIN encodings — retro receivers send ZHEX, lrzsz-in-CANOVIO-mode
+// ZHEX and ZBIN encodings — old receivers send ZHEX, lrzsz-in-CANOVIO-mode
 // can send ZBIN.
 func (s *sender) awaitOneOfWithCount(wants ...byte) (byte, uint32, error) {
 	const windowSize = 64

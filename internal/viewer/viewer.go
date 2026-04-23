@@ -1,4 +1,4 @@
-// Package viewer implements an interactive file viewer for retro-terminal
+// Package viewer implements an interactive file viewer for old-terminal
 // clients. Unlike the transfer protocols, it stays in a per-byte command
 // loop driven by main.go — arrow-free, single-keystroke commands suitable
 // for terminals that don't advertise cursor keys or line editing.

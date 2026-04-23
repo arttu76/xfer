@@ -30,7 +30,7 @@ func main() {
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "xfer v%s — XMODEM / ZMODEM / Kermit file server + viewer for retro computers\n\n", version)
+		fmt.Fprintf(os.Stderr, "xfer v%s — XMODEM / ZMODEM / Kermit file server + viewer for old computers\n\n", version)
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  -p, --port <number>       port to use (default: %d)\n", constants.DefaultPort)
 		fmt.Fprintf(os.Stderr, "  -d, --directory <string>  directory to serve (default: current directory)\n")

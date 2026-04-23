@@ -127,7 +127,7 @@ func ZmodemTransfer(ctx *Context, _ *Config, onDone OnDone) {
 	}
 	_ = ctx.Writeln("Please start your ZMODEM receiver NOW.")
 
-	// Flush pause so retro terminals' host monitors don't swallow the MD5
+	// Flush pause so old terminals' host monitors don't swallow the MD5
 	// line along with the ZRQINIT trigger pattern.
 	time.Sleep(500 * time.Millisecond)
 
