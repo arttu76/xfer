@@ -2,9 +2,9 @@
 
 ## Overview
 
-Getting files *onto* a retro computer is the hard part — floppies rot, serial cables are fiddly, and most vintage machines can't talk to modern networks on their own. A wifi modem (such as the [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)) solves the networking side, but the retro machine still needs something on the other end of the connection to serve the files.
+Getting files *onto* an old computer is the hard part — floppies rot, serial cables are fiddly, and most vintage machines can't talk to modern networks on their own. A wifi modem (such as the [WiModem232 Pro](https://www.cbmstuff.com/index.php?route=product/product&product_id=113)) solves the networking side, but the old machine still needs something on the other end of the connection to serve the files.
 
-XFER is that something. Run it on your modern computer, then from the retro machine's terminal program "dial" into it over the wifi modem: browse the modern computer's file system, view files inline, and download any of them to the retro side using XMODEM, ZMODEM, or Kermit.
+XFER is that something. Run it on your modern computer, then from the old machine's terminal program "dial" into it over the wifi modem: browse the modern computer's file system, view files inline, and download any of them to the old side using XMODEM, ZMODEM, or Kermit.
 
 ## Features
 
@@ -52,7 +52,7 @@ $ xfer -p 2000
 2026-04-22T12:15:30.123Z [INFO] Server now listening on 192.168.1.194:2000 / 10.0.0.5:2000
 ```
 
-### 2. On your "retro" computer, use terminal to connect:
+### 2. On your old computer, use terminal to connect:
 
 We're using the Hayes AT command to "dial" into the host computer's IP and port:
 
