@@ -99,16 +99,17 @@ correct a typo.
 
 Disable this feature with `-n` / `--no-url` (see Security Notes below).
 
-**Typing the URL on the server.** Typing a long URL on a retro keyboard is
-miserable, so xfer also reads its own stdin: while a client is sitting at
-the URL prompt, you can paste the URL into xfer's terminal and press Enter.
-The characters show up on the client's screen as if they'd typed them, and
-the download proceeds normally. Only one session at a time receives
-server-side paste (the one that pressed `U` first); any other sessions in
-URL mode must type on their own telnet connection. If stdin is closed
-(systemd, `< /dev/null`, daemonised) the feature is silently inert. Turn
-it off explicitly with `-c` / `--no-stdin-url` if you want to type
-unrelated things into the server console.
+**Type the URL on whichever keyboard is convenient.** Long URLs are
+miserable to type on a retro keyboard, so once the URL prompt is up you
+can enter the URL on *either* side — the old computer's terminal or
+directly into xfer's console on the modern computer (paste or type, then
+press Enter). Whichever side hits Enter first wins, and the characters
+echo on the old computer's screen as if typed there. Only one session at
+a time receives server-side input (the one that pressed `U` first); any
+other sessions in URL mode must type on their own telnet connection.
+If stdin is closed (systemd, `< /dev/null`, daemonised) the feature is
+silently inert. Turn it off explicitly with `-c` / `--no-stdin-url` if
+you want to type unrelated things into the server console.
 
 ### File viewer
 
