@@ -72,7 +72,7 @@ Enter 1-4, U=url, R=refresh, X=exit: 3
 Ready to download mule.prg
 Size: 48829 bytes
 MD5:  9a982e21160b982a02fd43412f14e127
-/Users/arttu/games/mule.prg — [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: Z
+/Users/arttu/games/mule.prg - [X]MODEM, [Z]MODEM, [K]ermit, [V]iew, or [C]ancel?: Z
 Initiating ZMODEM transfer for /Users/arttu/games/mule.prg
 Please start your ZMODEM receiver NOW.
 ```
