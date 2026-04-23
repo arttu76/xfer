@@ -156,8 +156,8 @@ lrzsz fileinfo format, XMODEM CRC / checksum modes and block wrap past
 
 - The server validates file paths to prevent directory traversal attacks
 - Use the `-s` (secure) flag to restrict users to the initial directory
-- ZMODEM transfers stream directly from the in-memory file buffer — no
-  temporary files are written to disk
+- All transfers and the viewer read the file into memory and stream from
+  the buffer — no temporary files are written to disk
 
 ## License
 
