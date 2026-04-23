@@ -99,10 +99,9 @@ func main() {
 	}
 }
 
-// handleConnection drives one client: file navigation → protocol confirm →
-// transfer → back to file list. The Node version was event-driven and needed
-// explicit listener bookkeeping to hand off the socket to the transfer
-// engines; with blocking I/O + goroutines that layering disappears.
+// handleConnection drives one client through the state machine —
+// navigate → confirm → transfer (or view, or URL entry) → back to the
+// listing — dispatching each read to the handler for the current mode.
 func handleConnection(conn net.Conn, initialPath string, cfg *session.Config) {
 	defer conn.Close()
 	logger.Info("Client connected")

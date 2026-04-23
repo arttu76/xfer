@@ -602,7 +602,7 @@ func TestFullSessionGolden_1025(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	got := cap.Bytes()
-	want, err := os.ReadFile(filepath.Join("..", "..", "test", "golden", "full-session-1025.bin"))
+	want, err := os.ReadFile(filepath.Join("testdata", "full-session-1025.bin"))
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}

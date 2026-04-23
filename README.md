@@ -146,7 +146,12 @@ The project is written in Go and uses a modular architecture:
 - `internal/logger/` — timestamped stderr logging
 - `internal/testutil/` — shared loopback / capture / golden-diff helpers for tests
 - `internal/constants/` — CLI defaults and menu prefixes
-- `test/golden/` — committed byte-exact wire-format fixtures
+
+Wire-format golden fixtures sit next to the package that loads them —
+`internal/xmodem/testdata/` and `internal/zmodem/testdata/`. The `go test`
+runner treats any `testdata/` directory as a first-class test-only asset
+(skipped by `go build`, `go vet`, and module tidying), so this is the
+idiomatic layout for committed fixtures in Go.
 
 ### Building
 
@@ -160,10 +165,10 @@ $ make test             # run the test suite
 
 The XMODEM and ZMODEM packages each include a byte-level wire-format test
 that compares the sender's output against a committed golden dump in
-`test/golden/`. The goldens were captured from a known-good session that
-had been tested against real old terminals (Term 4.8 on Amiga, lrzsz on
-Linux, SyncTerm, NComm), so passing them proves wire-format compatibility
-with those receivers byte-for-byte.
+the package's own `testdata/` directory. The goldens were captured from
+a known-good session that had been tested against real old terminals
+(Term 4.8 on Amiga, lrzsz on Linux, SyncTerm, NComm), so passing them
+proves wire-format compatibility with those receivers byte-for-byte.
 
 The rest of the suite covers the non-golden behaviors: ZRPOS resume,
 cancel (5×CAN → 8×CAN + 10×BS echo), activity timeout, subpacket sizing,

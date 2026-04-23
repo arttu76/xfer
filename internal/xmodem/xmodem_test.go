@@ -270,7 +270,7 @@ func TestCrossLangGolden_EveryByte(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	got := cap.Bytes()
-	want, err := os.ReadFile(filepath.Join("..", "..", "test", "golden", "xmodem-every-byte-crc.bin"))
+	want, err := os.ReadFile(filepath.Join("testdata", "xmodem-every-byte-crc.bin"))
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}

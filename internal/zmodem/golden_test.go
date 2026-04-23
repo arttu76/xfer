@@ -11,10 +11,11 @@ import (
 	"github.com/solvalou/xfer/internal/zmodem"
 )
 
-// These tests load the TS-produced goldens from test/golden/ and verify that
-// the Go implementation produces byte-identical output for the same scenario.
-// They are the contract that keeps the port provably equivalent to the
-// original.
+// These tests load the committed goldens from testdata/ and verify that
+// the sender still produces byte-identical output for the same scenario.
+// The goldens were captured from a known-good session that had been
+// verified against Term 4.8 / NComm / SyncTerm / lrzsz, so passing them
+// proves wire-format compatibility byte-for-byte.
 
 func TestGolden_ZfileHelloTxt(t *testing.T) {
 	pinClock(t, fixedEpoch)
@@ -29,7 +30,7 @@ func TestGolden_ZfileHelloTxt(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	got := cap.Bytes()
-	want, err := os.ReadFile(filepath.Join("..", "..", "test", "golden", "zfile-hello-txt.bin"))
+	want, err := os.ReadFile(filepath.Join("testdata", "zfile-hello-txt.bin"))
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestGolden_ZdataEveryByte(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 
 	got := cap.Bytes()
-	want, err := os.ReadFile(filepath.Join("..", "..", "test", "golden", "zdata-every-byte.bin"))
+	want, err := os.ReadFile(filepath.Join("testdata", "zdata-every-byte.bin"))
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
