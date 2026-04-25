@@ -6,7 +6,6 @@ package viewer
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/solvalou/xfer/internal/logger"
@@ -26,17 +25,6 @@ type promptMode int
 const (
 	promptNone promptMode = iota
 	promptSearch
-	promptLayoutWidth
-	promptLayoutHeight
-)
-
-const (
-	DefaultWidth  = 40
-	DefaultHeight = 20
-	MinWidth      = 20
-	MinHeight     = 4
-	MaxWidth      = 500
-	MaxHeight     = 200
 )
 
 type state struct {
@@ -60,9 +48,6 @@ type state struct {
 	// than re-finding it (the match may be mid-line, so the current top's
 	// byte offset alone isn't enough). -1 means no recorded match.
 	lastMatchByte int
-	// pendingWidth buffers the width between the 'l' width and height prompts
-	// so cancelling the height prompt leaves the old width untouched.
-	pendingWidth int
 }
 
 // Start enters view mode using the already-staged body on ctx. The navigator
@@ -82,8 +67,8 @@ func Start(ctx *session.Context, cfg *session.Config) {
 	s := &state{
 		data:          data,
 		name:          ctx.RequestedName,
-		width:         DefaultWidth,
-		height:        DefaultHeight,
+		width:         ctx.TermWidth,
+		height:        ctx.TermHeight,
 		lastMatchByte: -1,
 	}
 	if isBinary(data) {
@@ -101,7 +86,7 @@ func Start(ctx *session.Context, cfg *session.Config) {
 		kind = "binary"
 	}
 	_ = ctx.Writeln("")
-	_ = ctx.Writeln(fmt.Sprintf("--- %s (%d bytes, %s) --- press ? for help", s.name, len(data), kind))
+	_ = ctx.Writeln(fmt.Sprintf("--- %s (%d bytes, %s) --- press H for help", s.name, len(data), kind))
 	logger.Info(fmt.Sprintf("Viewing %s (%d bytes, %s)", ctx.RequestedFile, len(data), kind))
 	s.draw(ctx)
 }
@@ -133,8 +118,6 @@ func (s *state) handleByte(ctx *session.Context, cfg *session.Config, b byte) {
 		s.handleCommand(ctx, cfg, b)
 	case promptSearch:
 		s.handleSearchInput(ctx, cfg, b)
-	case promptLayoutWidth, promptLayoutHeight:
-		s.handleLayoutInput(ctx, cfg, b)
 	}
 }
 
@@ -171,11 +154,7 @@ func (s *state) handleCommand(ctx *session.Context, cfg *session.Config, b byte)
 		} else {
 			_ = ctx.Write("\r\nsearch: ")
 		}
-	case 'l':
-		s.prompt = promptLayoutWidth
-		s.buffer.Reset()
-		_ = ctx.Write(fmt.Sprintf("\r\nterminal width [%d]: ", s.width))
-	case '?':
+	case 'h':
 		s.drawHelp(ctx)
 	case 'q', 'c', 0x03, 0x04: // q, c, Ctrl-C, Ctrl-D
 		_ = ctx.Writeln("")
@@ -228,52 +207,6 @@ func (s *state) handleSearchInput(ctx *session.Context, cfg *session.Config, b b
 		return
 	}
 	if b >= 0x20 && b < 0x7f {
-		s.buffer.WriteByte(b)
-		_, _ = ctx.Conn.Write([]byte{b})
-	}
-}
-
-func (s *state) handleLayoutInput(ctx *session.Context, cfg *session.Config, b byte) {
-	if b == '\r' || b == '\n' {
-		val := strings.TrimSpace(s.buffer.String())
-		s.buffer.Reset()
-		if s.prompt == promptLayoutWidth {
-			w := s.width
-			if n, err := strconv.Atoi(val); err == nil && n >= MinWidth && n <= MaxWidth {
-				w = n
-			}
-			s.pendingWidth = w
-			s.prompt = promptLayoutHeight
-			_ = ctx.Write(fmt.Sprintf("\r\nterminal height [%d]: ", s.height))
-			return
-		}
-		// height phase
-		h := s.height
-		if n, err := strconv.Atoi(val); err == nil && n >= MinHeight && n <= MaxHeight {
-			h = n
-		}
-		// Preserve visible position across width change.
-		anchor := s.currentByte()
-		s.width = s.pendingWidth
-		s.height = h
-		s.rebuildCharLines()
-		s.setByteTopLine(anchor)
-		s.clampTop()
-		s.prompt = promptNone
-		s.draw(ctx)
-		return
-	}
-	if b == 0x7f || b == 0x08 {
-		if s.buffer.Len() > 0 {
-			str := s.buffer.String()
-			s.buffer.Reset()
-			s.buffer.WriteString(str[:len(str)-1])
-			_, _ = ctx.Conn.Write([]byte{'\b', ' ', '\b'})
-		}
-		return
-	}
-	// digits only for layout
-	if b >= '0' && b <= '9' {
 		s.buffer.WriteByte(b)
 		_, _ = ctx.Conn.Write([]byte{b})
 	}
@@ -472,24 +405,24 @@ func (s *state) draw(ctx *session.Context) {
 }
 
 func (s *state) drawPrompt(ctx *session.Context) {
-	modeName := "CHAR"
+	modeLabel := "char"
 	if s.mode == ModeHex {
-		modeName = "HEX"
+		modeLabel = "hex"
 	}
 	total := s.totalLines()
-	_ = ctx.Write(fmt.Sprintf("%s %d/%d fbdu mslq (?=help): ",
-		modeName, s.topLine+1, total))
+	_ = ctx.Write(fmt.Sprintf("%d/%d [S]earch, [M]ode(%s), [H]elp, [Q]uit: ",
+		s.topLine+1, total, modeLabel))
 }
 
 func (s *state) drawHelp(ctx *session.Context) {
 	_ = ctx.Writeln("")
 	_ = ctx.Writeln("Viewer commands:")
 	_ = ctx.Writeln("  f / b   one line forward / back")
-	_ = ctx.Writeln("  d / u   one page down / up (SPACE=d)")
-	_ = ctx.Writeln("  m       toggle hex / char display")
-	_ = ctx.Writeln("  s       search (blank=repeat last)")
-	_ = ctx.Writeln("  l       set terminal width / height")
-	_ = ctx.Writeln("  q / c   quit back to file list")
+	_ = ctx.Writeln("  d / u   one page down / up (SPACE = d)")
+	_ = ctx.Writeln("  [M]ode  toggle hex / char display")
+	_ = ctx.Writeln("  [S]earch  blank = repeat last search")
+	_ = ctx.Writeln("  [H]elp  show this list")
+	_ = ctx.Writeln("  [Q]uit  back to the file list (also: c, Ctrl-C, Ctrl-D)")
 	s.drawPrompt(ctx)
 }
 

@@ -14,6 +14,8 @@ XFER is that something. Run it on your modern computer, then from the old machin
 - File transfer using ZMODEM protocol (faster; built in, no extra tools needed)
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
+- Auto-detects the connected terminal's size on connect (ANSI cursor-position probe) so the viewer and directory listing lay out correctly without manual configuration; falls back gracefully on terminals that don't answer
+- Paginated directory browsing with `[M]ore` / `[S]earch`: large directories don't scroll off the screen, and the search filter narrows a long listing to just the files whose names match a substring (case-insensitive)
 - Download a file directly from a URL: the server fetches it (http/https) straight into memory and streams it to the old computer, no scratch file on disk
 - Paste long URLs into the server's own keyboard instead of typing them on the old terminal; both sides can type, first Enter wins (opt out with `--no-stdin-url`)
 - Tuned for the old terminal programs of the era (CRC16, 1 KB subpackets, 8 KB
@@ -34,7 +36,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.2.1 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
+xfer v1.2.2 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
 
 Usage: xfer [flags]
 
@@ -44,6 +46,10 @@ Usage: xfer [flags]
   -n, --no-url              disallow the [U]RL download option in the file listing
   -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt
   -w, --wirelog <path>      hexdump every wire byte to file ("-" for stderr)
+      --term-width <n>      default/fallback terminal width (default: 40)
+      --term-height <n>     default/fallback terminal height (default: 20)
+      --no-term-detect      skip terminal-size auto-detection on connect
+      --term-detect-timeout <ms> how long to wait for the probe reply (default: 2000)
   -V, --version             print version and exit
   -h, --help                print this help and exit
 ```
@@ -54,7 +60,7 @@ higher port instead, for example 2000:
 
 ```
 $ xfer -p 2000
-2026-04-22T12:15:30.123Z [INFO] Server now listening on 192.168.1.194:2000 / 10.0.0.5:2000
+2026-04-22T12:15:30.123Z Server now listening on 192.168.1.194:2000 / 10.0.0.5:2000
 ```
 
 ### 2. On your old computer, use terminal to connect:
@@ -63,12 +69,14 @@ We're using the Hayes AT command to "dial" into the host computer's IP and port:
 
 ```
 ATDT192.168.1.194:2000
+Detecting terminal size...
+Terminal size: 80x25
 ----- /Users/arttu/games -----
 1 <D> ..
 2 ... paradroid.prg
 3 ... mule.prg
 4 ... wizball.prg
-Enter 1-4, U=url, R=refresh, X=exit: 3
+1-4, [U]RL, [S]earch, [R]efresh, e[X]it: 3
 Ready to download mule.prg
 Size: 48829 bytes
 MD5:  9a982e21160b982a02fd43412f14e127
@@ -86,6 +94,42 @@ and start receiving. For XMODEM and Kermit you need to manually trigger
 the receive in your terminal program.
 
 You can also browse the host computer's file system (unless you start the xfer with "secure mode" which allows you to only browse files and not to move to another directory)
+
+### Terminal size auto-detection
+
+On connect xfer sends a standard ANSI cursor-position probe (`ESC[6n`)
+and uses the terminal's reply to pick a size for the directory listing
+and the file viewer. Most modern terminal emulators answer in a few
+milliseconds; vintage terminals over a wifi modem (Term 4.8 on Amiga,
+for example) take ~1 second. xfer waits up to two seconds and then
+either:
+
+- prints `Terminal size: 80x25` (whatever the terminal reported), or
+- prints `Terminal size not detected, using 40x20` and falls back to the
+  configured defaults.
+
+On a terminal that doesn't understand CSI escape sequences (e.g. a plain
+PETSCII terminal on a C64), the probe bytes echo as a few literal
+characters on screen — the leading `Detecting terminal size...` line is
+there to frame those characters as detection noise rather than
+unexplained garbage.
+
+Override the defaults with `--term-width` / `--term-height`, skip the
+probe entirely with `--no-term-detect` if you're connecting from a
+terminal that mis-handles the escape sequence, or extend the wait with
+`--term-detect-timeout 5000` (milliseconds) if your link is even slower
+than two seconds.
+
+### Listing big directories
+
+When a directory has more files than fit on one screen the listing
+pauses with `[M]ore, [S]earch:` after each page. Press `M` to keep
+paging, or `S` to filter — type a substring and the listing redraws as
+just the files whose names match (case-insensitive), preserving the
+original entry numbers so the digit you type at the menu still picks
+the right file. From the final menu prompt `S` triggers the same
+search; pressing Enter on an empty term takes you back to the unfiltered
+listing.
 
 ### Downloading from a URL
 
@@ -118,9 +162,14 @@ display accordingly. Single-keystroke controls (no arrow keys needed):
 | `d` / `u` | scroll one page down / up (SPACE = `d`)      |
 | `m`       | toggle hex / char display                    |
 | `s`       | search; empty input repeats the last search  |
-| `l`       | set terminal width (default 40) and height (default 20) so the viewer lays out correctly on your terminal |
 | `q` / `c` | quit back to the file list                   |
-| `?`       | show help                                    |
+| `h`       | show help                                    |
+
+The viewer's terminal dimensions come from the connect-time auto-detect
+(see "Terminal size auto-detection" above) — there's no in-viewer
+override because nothing on the wire would carry it back if the user
+overrode it for a URL-fetched body. Pass `--term-width` / `--term-height`
+on the server command line if you need to force a specific size.
 
 ### 3. That's it!
 

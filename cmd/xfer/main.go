@@ -21,7 +21,7 @@ import (
 	"github.com/solvalou/xfer/internal/wirelog"
 )
 
-var version = "1.2.1"
+var version = "1.2.2"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")
@@ -36,6 +36,10 @@ func main() {
 	flag.BoolVar(noStdinURL, "no-stdin-url", false, "do not inject stdin lines into a client's URL prompt")
 	wireLog := flag.String("w", "", "hexdump every byte each direction to this file (\"-\" for stderr)")
 	flag.StringVar(wireLog, "wirelog", "", "hexdump every byte each direction to this file")
+	termWidth := flag.Int("term-width", constants.TermDefaultWidth, "default/fallback terminal width")
+	termHeight := flag.Int("term-height", constants.TermDefaultHeight, "default/fallback terminal height")
+	noTermDetect := flag.Bool("no-term-detect", false, "skip terminal-size auto-detection on connect")
+	termDetectTimeoutMs := flag.Int("term-detect-timeout", int(session.DefaultDetectTimeout/time.Millisecond), "how long to wait for the terminal-size probe reply, in milliseconds")
 	showVersion := flag.Bool("V", false, "print version and exit")
 	flag.BoolVar(showVersion, "version", false, "print version and exit")
 
@@ -48,6 +52,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -n, --no-url              disallow the [U]RL download option in the file listing\n")
 		fmt.Fprintf(os.Stderr, "  -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt\n")
 		fmt.Fprintf(os.Stderr, "  -w, --wirelog <path>      hexdump every wire byte to file (\"-\" for stderr)\n")
+		fmt.Fprintf(os.Stderr, "      --term-width <n>      default/fallback terminal width (default: %d)\n", constants.TermDefaultWidth)
+		fmt.Fprintf(os.Stderr, "      --term-height <n>     default/fallback terminal height (default: %d)\n", constants.TermDefaultHeight)
+		fmt.Fprintf(os.Stderr, "      --no-term-detect      skip terminal-size auto-detection on connect\n")
+		fmt.Fprintf(os.Stderr, "      --term-detect-timeout <ms> how long to wait for the probe reply (default: %d)\n", int(session.DefaultDetectTimeout/time.Millisecond))
 		fmt.Fprintf(os.Stderr, "  -V, --version             print version and exit\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help                print this help and exit\n")
 	}
@@ -59,6 +67,18 @@ func main() {
 	}
 	if *port < constants.MinPort || *port > constants.MaxPort {
 		fmt.Fprintf(os.Stderr, "invalid port: %d\n", *port)
+		os.Exit(2)
+	}
+	if *termWidth < constants.TermMinWidth || *termWidth > constants.TermMaxWidth {
+		fmt.Fprintf(os.Stderr, "invalid --term-width %d (must be %d-%d)\n", *termWidth, constants.TermMinWidth, constants.TermMaxWidth)
+		os.Exit(2)
+	}
+	if *termHeight < constants.TermMinHeight || *termHeight > constants.TermMaxHeight {
+		fmt.Fprintf(os.Stderr, "invalid --term-height %d (must be %d-%d)\n", *termHeight, constants.TermMinHeight, constants.TermMaxHeight)
+		os.Exit(2)
+	}
+	if *termDetectTimeoutMs < 1 {
+		fmt.Fprintf(os.Stderr, "invalid --term-detect-timeout %d (must be >= 1 ms)\n", *termDetectTimeoutMs)
 		os.Exit(2)
 	}
 
@@ -82,7 +102,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	cfg := &session.Config{SecureMode: *secure, NoURL: *noURL}
+	cfg := &session.Config{
+		SecureMode:        *secure,
+		NoURL:             *noURL,
+		TermDetect:        !*noTermDetect,
+		TermWidth:         *termWidth,
+		TermHeight:        *termHeight,
+		TermDetectTimeout: time.Duration(*termDetectTimeoutMs) * time.Millisecond,
+	}
 
 	var sink *wirelog.Sink
 	if *wireLog != "" {
@@ -143,10 +170,22 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 	logger.Info("Client connected")
 	defer logger.Info("Client disconnected")
 
+	// Probe the terminal for its size before any goroutine starts reading
+	// from conn — the response (ESC[r;cR) needs to land in this read, not
+	// in the input-reader goroutine that we spin up below.
+	cols, rows, detected := session.ResolveTerminalSize(conn, cfg)
+	if cfg.TermDetect {
+		logger.Info(fmt.Sprintf("Terminal size %dx%d (detected=%v)", cols, rows, detected))
+	} else {
+		logger.Info(fmt.Sprintf("Terminal size %dx%d (detection disabled)", cols, rows))
+	}
+
 	ctx := &session.Context{
-		Mode: session.ModeNavigate,
-		Path: initialPath,
-		Conn: conn,
+		Mode:       session.ModeNavigate,
+		Path:       initialPath,
+		Conn:       conn,
+		TermWidth:  cols,
+		TermHeight: rows,
 	}
 	navigator.ListFiles(ctx, cfg)
 
@@ -243,6 +282,10 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 			continue
 		}
 		if ctx.Mode == session.ModeNavigate {
+			if navigator.PagerActive(ctx) {
+				navigator.HandlePagerInput(ctx, cfg, data)
+				continue
+			}
 			handleNavigateInput(ctx, cfg, data, &inputBuffer)
 			continue
 		}
@@ -297,6 +340,10 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 		case 'r':
 			_ = ctx.Writeln("Refreshing...")
 			navigator.ListFiles(ctx, cfg)
+			buf.Reset()
+			return
+		case 's':
+			navigator.BeginSearch(ctx, cfg)
 			buf.Reset()
 			return
 		case 'u':
