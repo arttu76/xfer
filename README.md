@@ -47,6 +47,12 @@ Usage: xfer [flags]
   -n, --no-url              disallow the [U]RL download option in the file listing
       --no-upload           disallow the [P]ut upload option in the file listing
                             (implied by --secure)
+      --onlyx               force XMODEM for every transfer (skip protocol prompt;
+                            cancel/view no longer reachable)
+      --onlyz               force ZMODEM for every transfer (skip protocol prompt;
+                            cancel/view no longer reachable)
+      --onlyk               force Kermit for every transfer (skip protocol prompt;
+                            cancel/view no longer reachable)
   -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt
   -w, --wirelog <path>      hexdump every wire byte to file ("-" for stderr)
       --term-width <n>      default/fallback terminal width (default: 40)
@@ -147,6 +153,13 @@ host's disk. Submitting an empty URL takes you back to the listing; a
 failed fetch (bad host, 404, etc.) re-prompts for the URL so you can
 correct a typo.
 
+**Type the URL on whichever keyboard is convenient.** Long URLs are
+miserable to type on a retro keyboard, so once the URL prompt is up you
+can enter the URL on *either* side — the old computer's terminal or
+directly into xfer's console on the modern computer (paste or type, then
+press Enter). Whichever side hits Enter first wins, and the characters
+echo on the old computer's screen as if typed there.
+
 Disable this feature with `-n` / `--no-url` (see Security Notes below).
 
 ### Uploading a file from the client
@@ -172,12 +185,22 @@ Notes:
   `--no-upload` since a host that has locked navigation also shouldn't
   accept inbound files into the served tree.
 
-**Type the URL on whichever keyboard is convenient.** Long URLs are
-miserable to type on a retro keyboard, so once the URL prompt is up you
-can enter the URL on *either* side — the old computer's terminal or
-directly into xfer's console on the modern computer (paste or type, then
-press Enter). Whichever side hits Enter first wins, and the characters
-echo on the old computer's screen as if typed there.
+### Forcing a single protocol
+
+If the connecting client only speaks one transfer protocol — or if you
+just don't want to deal with the per-transfer prompt — pass one of
+`--onlyx`, `--onlyz`, or `--onlyk` to lock every transfer (download
+*and* upload) to that protocol. The picker prompt is skipped entirely:
+
+- A download starts immediately after the size/MD5 line.
+- An upload starts immediately after `[P]ut`, prompting only for an
+  XMODEM filename when needed.
+
+The flags are mutually exclusive. Because the protocol prompt is the
+only place that hosts the [V]iew and [C]ancel choices, those become
+unreachable while a forced protocol is active — the file viewer is
+still accessible by picking it from a normal session that *doesn't*
+use `--onlyx/z/k`.
 
 ### File viewer
 
@@ -221,17 +244,20 @@ The project is written in Go and uses a modular architecture:
 - `cmd/xfer/` — CLI entry point, flag parsing, TCP accept loop
 - `internal/session/` — per-connection state machine and transfer handlers
 - `internal/navigator/` — file browsing, listing, secure-mode path checks
-- `internal/protocol/` — XMODEM/ZMODEM/Kermit/View/cancel selection prompt
+- `internal/protocol/` — download protocol picker (XMODEM/ZMODEM/Kermit/View/cancel),
+  upload protocol picker, and the per-transfer completion line
 - `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
 - `internal/urlfetch/` — http/https downloader used by the `U=url` option
 - `internal/urlconsole/` — registry + stdin reader for server-side URL paste
-- `internal/xmodem/` — XMODEM sender + receiver (CRC-16 + checksum, NAK retransmit, EOT)
-- `internal/zmodem/` — ZMODEM sender tuned for old-terminal compatibility
-  (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
-  fileinfo, `rz\r` trigger, 5×CAN cancel)
-- `internal/kermit/` — Kermit sender: long packets, type-1/2/3 block checks
-  (CRC-16-Kermit), 8-bit quoting, run-length encoding, and sliding-window
-  flow control — feature set negotiated from the receiver's S-ACK
+- `internal/xmodem/` — XMODEM sender + receiver (CRC-16 + checksum, NAK
+  retransmit, EOT, Ctrl-Z padding strip on receive)
+- `internal/zmodem/` — ZMODEM sender + receiver tuned for old-terminal
+  compatibility (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL
+  negotiation, lrzsz fileinfo, `rz\r` trigger, 5×CAN cancel)
+- `internal/kermit/` — Kermit sender + receiver: long packets, type-1/2/3
+  block checks (CRC-16-Kermit), 8-bit quoting, run-length encoding, and
+  sliding-window flow control — feature set negotiated from the peer's
+  S-packet
 - `internal/logger/` — timestamped stderr logging
 - `internal/testutil/` — shared loopback / capture / golden-diff helpers for tests
 - `internal/constants/` — CLI defaults and menu prefixes
@@ -263,7 +289,10 @@ The rest of the suite covers the non-golden behaviors: ZRPOS resume,
 cancel (5×CAN → 8×CAN + 10×BS echo), activity timeout, subpacket sizing,
 8-per-ACK pacing, ESCCTL negotiation for lrzsz / Term 4.8 / NComm caps,
 lrzsz fileinfo format, XMODEM CRC / checksum modes and block wrap past
-32 KB, navigator path-traversal guard, and protocol selector branches.
+32 KB, navigator path-traversal guard, the [M]ore-prompt menu hand-off,
+and protocol selector branches. The XMODEM, ZMODEM, and Kermit receivers
+have their own scripted-peer suites covering NAK retransmits, ZRINIT /
+ZFILE handshake, and Kermit S/F/D/Z/B sequencing.
 
 ## Security Notes
 
