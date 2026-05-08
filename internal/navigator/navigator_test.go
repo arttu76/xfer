@@ -351,7 +351,7 @@ func TestListFiles_PaginatesAndContinuesOnMore(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "first more-prompt")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "first more-prompt")
 
 	first := cap.String()
 	// Page 1: file001..file008 should appear. file009 should NOT yet.
@@ -376,7 +376,7 @@ func TestListFiles_PaginatesAndContinuesOnMore(t *testing.T) {
 	}, "page 2")
 	waitFor(t, cap, func(b []byte) bool {
 		// Two M-prompts seen total (one per finished page).
-		return bytes.Count(b, []byte("[M]ore, [S]earch")) >= 2
+		return bytes.Count(b, []byte("[M]ore, ")) >= 2
 	}, "second more-prompt")
 
 	// Continue M-ing until the listing finishes.
@@ -428,7 +428,7 @@ func TestListFiles_SearchFiltersAndPreservesOriginalNumbers(t *testing.T) {
 	ctx, cap, _, cleanup = newConnCtx(t, dir, 80, 6) // pageSize = 4
 	defer cleanup()
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "more-prompt with 7 files")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt with 7 files")
 
 	// Press S — should ask for search term.
 	HandlePagerInput(ctx, cfg, []byte("S"))
@@ -488,7 +488,7 @@ func TestListFiles_EmptySearchContinuesPaging(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "first more-prompt")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "first more-prompt")
 
 	// S then immediate Enter — empty term means "continue".
 	HandlePagerInput(ctx, cfg, []byte("S"))
@@ -512,7 +512,7 @@ func TestListFiles_SearchCaseInsensitive(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "more-prompt")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt")
 
 	HandlePagerInput(ctx, cfg, []byte("S"))
 	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("Search (empty=continue)")) }, "search prompt")
@@ -529,7 +529,7 @@ func TestListFiles_SearchNoMatches(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "more-prompt")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt")
 
 	HandlePagerInput(ctx, cfg, []byte("S"))
 	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("Search (empty=continue)")) }, "search prompt")
@@ -557,7 +557,7 @@ func TestListFiles_LaterPagesFitOneMoreEntry(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "first more-prompt")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "first more-prompt")
 
 	first := cap.String()
 	if !strings.Contains(first, "file008.txt") {
@@ -573,7 +573,7 @@ func TestListFiles_LaterPagesFitOneMoreEntry(t *testing.T) {
 		return bytes.Contains(b, []byte("file017.txt"))
 	}, "second page reaches file017")
 	waitFor(t, cap, func(b []byte) bool {
-		return bytes.Count(b, []byte("[M]ore, [S]earch")) >= 2
+		return bytes.Count(b, []byte("[M]ore, ")) >= 2
 	}, "second more-prompt")
 
 	// Page 2 must NOT yet include file018 — that belongs to page 3.
@@ -619,6 +619,97 @@ func TestBeginSearch_FromFinalPromptFiltersAndCancels(t *testing.T) {
 	}, "back to unfiltered listing")
 }
 
+// At the [M]ore prompt the user must be able to bail out via the same
+// final-menu shortcuts that appear once the listing is fully drawn —
+// digit (number selection), U/P/R/X. This test only verifies the pager
+// hand-off: after a non-pager byte arrives, the pager deactivates and
+// returns the unconsumed input so the main loop can dispatch it.
+func TestHandlePagerInput_FinalMenuShortcutsDeactivatePager(t *testing.T) {
+	dir := t.TempDir()
+	makeFiles(t, dir, 30)
+	cfg := &session.Config{SecureMode: true}
+
+	cases := []struct {
+		name string
+		in   []byte
+		want []byte
+	}{
+		{"digit", []byte("5\r"), []byte("5\r")},
+		{"exit", []byte("X"), []byte("X")},
+		{"refresh", []byte("R"), []byte("R")},
+		{"url", []byte("U"), []byte("U")},
+		{"upload", []byte("P"), []byte("P")},
+		{"more-still-consumed", []byte("M"), nil},
+		{"search-still-consumed", []byte("S"), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cap, _, cleanup := newConnCtx(t, dir, 80, 10)
+			defer cleanup()
+
+			ListFiles(ctx, cfg)
+			waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt")
+
+			rest := HandlePagerInput(ctx, cfg, tc.in)
+			if !bytes.Equal(rest, tc.want) {
+				t.Fatalf("remainder = %q, want %q", rest, tc.want)
+			}
+			// M and S keep the pager active; everything else hands off.
+			wantActive := tc.name == "more-still-consumed" || tc.name == "search-still-consumed"
+			if got := PagerActive(ctx); got != wantActive {
+				t.Fatalf("PagerActive = %v, want %v", got, wantActive)
+			}
+		})
+	}
+}
+
+// When --no-url / --no-upload hide a shortcut, the pager must keep
+// ignoring that key (just like it always has) — otherwise users on a
+// secured deployment could trigger a feature that's supposed to be off.
+func TestHandlePagerInput_HiddenShortcutsStillIgnored(t *testing.T) {
+	dir := t.TempDir()
+	makeFiles(t, dir, 30)
+	cfg := &session.Config{SecureMode: true, NoURL: true, NoUpload: true}
+
+	ctx, cap, _, cleanup := newConnCtx(t, dir, 80, 10)
+	defer cleanup()
+
+	ListFiles(ctx, cfg)
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt")
+
+	for _, b := range []byte{'U', 'u', 'P', 'p'} {
+		rest := HandlePagerInput(ctx, cfg, []byte{b})
+		if rest != nil {
+			t.Fatalf("byte %q leaked to caller despite being hidden by cfg: %q", b, rest)
+		}
+		if !PagerActive(ctx) {
+			t.Fatalf("pager deactivated on hidden shortcut %q", b)
+		}
+	}
+}
+
+// The mid-listing [M]ore prompt advertises the same selection / URL /
+// upload / exit options as the final prompt, so users don't have to
+// page through to the end before they can act.
+func TestRenderNextPage_PromptAdvertisesFinalMenuOptions(t *testing.T) {
+	dir := t.TempDir()
+	makeFiles(t, dir, 30)
+	cfg := &session.Config{SecureMode: true}
+
+	ctx, cap, _, cleanup := newConnCtx(t, dir, 80, 10)
+	defer cleanup()
+
+	ListFiles(ctx, cfg)
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt")
+
+	got := cap.String()
+	for _, want := range []string{"1-30,", "[M]ore,", "[U]RL,", "[P]ut,", "[S]earch,", "[R]efresh,", "e[X]it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("more-prompt missing %q; full output:\n%s", want, got)
+		}
+	}
+}
+
 func TestListFiles_PageSizeFloor(t *testing.T) {
 	// TermHeight=2 would naively give pageSize=0 — must be clamped so a
 	// pathologically small terminal still makes progress one page at a time.
@@ -629,7 +720,7 @@ func TestListFiles_PageSizeFloor(t *testing.T) {
 	defer cleanup()
 
 	ListFiles(ctx, cfg)
-	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, [S]earch")) }, "more-prompt with tiny terminal")
+	waitFor(t, cap, func(b []byte) bool { return bytes.Contains(b, []byte("[M]ore, ")) }, "more-prompt with tiny terminal")
 
 	// Just confirm at least one entry rendered and the pager paused —
 	// the exact floor (4) is implementation detail.

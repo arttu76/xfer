@@ -21,7 +21,7 @@ import (
 	"github.com/solvalou/xfer/internal/wirelog"
 )
 
-var version = "1.2.2"
+var version = "1.3.0"
 
 func main() {
 	port := flag.Int("p", constants.DefaultPort, "port to use")
@@ -32,6 +32,10 @@ func main() {
 	flag.BoolVar(secure, "secure", false, "secure mode")
 	noURL := flag.Bool("n", false, "disallow the [U]RL download option in the file listing")
 	flag.BoolVar(noURL, "no-url", false, "disallow URL downloads")
+	noUpload := flag.Bool("no-upload", false, "disallow the [P]ut upload option in the file listing")
+	onlyX := flag.Bool("onlyx", false, "force XMODEM for every transfer (skip protocol prompt; cancel/view no longer reachable)")
+	onlyZ := flag.Bool("onlyz", false, "force ZMODEM for every transfer (skip protocol prompt; cancel/view no longer reachable)")
+	onlyK := flag.Bool("onlyk", false, "force Kermit for every transfer (skip protocol prompt; cancel/view no longer reachable)")
 	noStdinURL := flag.Bool("c", false, "do not inject stdin lines into a client's URL prompt")
 	flag.BoolVar(noStdinURL, "no-stdin-url", false, "do not inject stdin lines into a client's URL prompt")
 	wireLog := flag.String("w", "", "hexdump every byte each direction to this file (\"-\" for stderr)")
@@ -50,6 +54,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -d, --directory <string>  directory to serve (default: current directory)\n")
 		fmt.Fprintf(os.Stderr, "  -s, --secure              secure mode: don't allow user to change directories\n")
 		fmt.Fprintf(os.Stderr, "  -n, --no-url              disallow the [U]RL download option in the file listing\n")
+		fmt.Fprintf(os.Stderr, "      --no-upload           disallow the [P]ut upload option in the file listing\n")
+		fmt.Fprintf(os.Stderr, "                            (implied by --secure)\n")
+		fmt.Fprintf(os.Stderr, "      --onlyx               force XMODEM for every transfer (skip protocol prompt;\n")
+		fmt.Fprintf(os.Stderr, "                            cancel/view no longer reachable)\n")
+		fmt.Fprintf(os.Stderr, "      --onlyz               force ZMODEM for every transfer (skip protocol prompt;\n")
+		fmt.Fprintf(os.Stderr, "                            cancel/view no longer reachable)\n")
+		fmt.Fprintf(os.Stderr, "      --onlyk               force Kermit for every transfer (skip protocol prompt;\n")
+		fmt.Fprintf(os.Stderr, "                            cancel/view no longer reachable)\n")
 		fmt.Fprintf(os.Stderr, "  -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt\n")
 		fmt.Fprintf(os.Stderr, "  -w, --wirelog <path>      hexdump every wire byte to file (\"-\" for stderr)\n")
 		fmt.Fprintf(os.Stderr, "      --term-width <n>      default/fallback terminal width (default: %d)\n", constants.TermDefaultWidth)
@@ -82,6 +94,21 @@ func main() {
 		os.Exit(2)
 	}
 
+	var forcedProtocol byte
+	if n := boolCount(*onlyX, *onlyZ, *onlyK); n > 1 {
+		fmt.Fprintln(os.Stderr, "--onlyx, --onlyz, --onlyk are mutually exclusive")
+		os.Exit(2)
+	} else if n == 1 {
+		switch {
+		case *onlyX:
+			forcedProtocol = 'x'
+		case *onlyZ:
+			forcedProtocol = 'z'
+		case *onlyK:
+			forcedProtocol = 'k'
+		}
+	}
+
 	initialPath := *dir
 	if initialPath == "" {
 		cwd, err := os.Getwd()
@@ -102,13 +129,32 @@ func main() {
 		os.Exit(2)
 	}
 
+	// --secure forces --no-upload: a host that has locked navigation also
+	// shouldn't accept inbound files into the served tree.
+	uploadDisabled := *noUpload || *secure
+
 	cfg := &session.Config{
 		SecureMode:        *secure,
 		NoURL:             *noURL,
+		NoUpload:          uploadDisabled,
 		TermDetect:        !*noTermDetect,
 		TermWidth:         *termWidth,
 		TermHeight:        *termHeight,
 		TermDetectTimeout: time.Duration(*termDetectTimeoutMs) * time.Millisecond,
+		ForcedProtocol:    forcedProtocol,
+	}
+
+	if forcedProtocol != 0 {
+		var name string
+		switch forcedProtocol {
+		case 'x':
+			name = "XMODEM"
+		case 'z':
+			name = "ZMODEM"
+		case 'k':
+			name = "KERMIT"
+		}
+		logger.Info(fmt.Sprintf("Forcing %s for every transfer (protocol prompt skipped)", name))
 	}
 
 	var sink *wirelog.Sink
@@ -237,6 +283,59 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 	}
 	startReader()
 
+	// Hoisted start-fn closures: each transfer takes the conn for its own
+	// protocol reader, so the input-reader goroutine must be paused for the
+	// duration. These are referenced both by the existing ModeConfirmTransfer
+	// / ModeUploadProtocol input handlers and by the auto-dispatch path that
+	// fires when --onlyx/--onlyz/--onlyk skips the protocol prompt.
+	withPause := func(f func(*session.Context)) func(*session.Context) {
+		return func(c *session.Context) {
+			stopReader()
+			f(c)
+			startReader()
+		}
+	}
+	doneFn := func(name string, c *session.Context) session.OnDone {
+		return func(ok bool, code int) {
+			protocol.ShowTransferComplete(c, cfg, name, ok, code)
+		}
+	}
+	startX := withPause(func(c *session.Context) { session.XmodemTransfer(c, cfg, doneFn("XMODEM", c)) })
+	startZ := withPause(func(c *session.Context) { session.ZmodemTransfer(c, cfg, doneFn("ZMODEM", c)) })
+	startK := withPause(func(c *session.Context) { session.KermitTransfer(c, cfg, doneFn("KERMIT", c)) })
+	startV := func(c *session.Context) { viewer.Start(c, cfg) }
+	startUploadZ := withPause(func(c *session.Context) { runZmodemUpload(c, cfg) })
+	startUploadK := withPause(func(c *session.Context) { runKermitUpload(c, cfg) })
+
+	// confirmReady is invoked when a transferable body has just been staged
+	// (local pick or URL fetch landed in ModeConfirmTransfer). With a forced
+	// protocol it dispatches the transfer immediately; otherwise it prints
+	// the X/Z/K/V/C selection prompt and waits for a keystroke.
+	confirmReady := func(c *session.Context) {
+		if cfg.ForcedProtocol != 0 {
+			protocol.ConfirmAndStartTransfer(c, string([]byte{cfg.ForcedProtocol}), cfg,
+				startX, startZ, startK, startV)
+			return
+		}
+		protocol.ShowProtocolPrompt(c)
+	}
+	// uploadStart is invoked by the [P]ut handler. With a forced protocol we
+	// route through DispatchUploadProtocol directly (synthetic input byte) so
+	// XMODEM still falls through to the filename-entry step and Z/K start
+	// straight away. Otherwise we transition to ModeUploadProtocol and ask.
+	// The leading newline matches the original handler — it breaks off the
+	// listing's input line so the banner/prompt lands on its own row.
+	uploadStart := func(c *session.Context) {
+		_ = c.Writeln("")
+		if cfg.ForcedProtocol != 0 {
+			protocol.DispatchUploadProtocol(c, string([]byte{cfg.ForcedProtocol}), cfg,
+				startUploadZ, startUploadK)
+			return
+		}
+		c.Mode = session.ModeUploadProtocol
+		protocol.ShowUploadProtocolPrompt(c)
+	}
+
 	injectCh := make(chan []byte, 4)
 	var injectRegID int // 0 = not registered
 	defer func() {
@@ -283,33 +382,20 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 		}
 		if ctx.Mode == session.ModeNavigate {
 			if navigator.PagerActive(ctx) {
-				navigator.HandlePagerInput(ctx, cfg, data)
-				continue
+				rest := navigator.HandlePagerInput(ctx, cfg, data)
+				if len(rest) == 0 {
+					continue
+				}
+				// Pager deactivated mid-buffer because the user pressed a
+				// final-menu shortcut at the [M]ore prompt; let the regular
+				// handler interpret the unconsumed bytes (digit/U/P/R/X).
+				data = rest
 			}
-			handleNavigateInput(ctx, cfg, data, &inputBuffer)
+			handleNavigateInput(ctx, cfg, data, &inputBuffer, confirmReady, uploadStart)
 			continue
 		}
 		if ctx.Mode == session.ModeConfirmTransfer {
-			done := func(name string, c *session.Context) session.OnDone {
-				return func(ok bool, code int) {
-					protocol.ShowTransferComplete(c, cfg, name, ok, code)
-				}
-			}
-			// Each transfer takes the conn for its own protocol reader, so
-			// pause our input goroutine for the duration. Viewer uses the
-			// main-loop byte stream and doesn't need exclusive access.
-			withPause := func(f func(*session.Context)) func(*session.Context) {
-				return func(c *session.Context) {
-					stopReader()
-					f(c)
-					startReader()
-				}
-			}
-			protocol.ConfirmAndStartTransfer(ctx, string(data), cfg,
-				withPause(func(c *session.Context) { session.XmodemTransfer(c, cfg, done("XMODEM", c)) }),
-				withPause(func(c *session.Context) { session.ZmodemTransfer(c, cfg, done("ZMODEM", c)) }),
-				withPause(func(c *session.Context) { session.KermitTransfer(c, cfg, done("KERMIT", c)) }),
-				func(c *session.Context) { viewer.Start(c, cfg) })
+			protocol.ConfirmAndStartTransfer(ctx, string(data), cfg, startX, startZ, startK, startV)
 			continue
 		}
 		if ctx.Mode == session.ModeView {
@@ -317,7 +403,23 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 			continue
 		}
 		if ctx.Mode == session.ModeEnterURL {
-			handleURLInput(ctx, cfg, data, &inputBuffer)
+			handleURLInput(ctx, cfg, data, &inputBuffer, confirmReady)
+			continue
+		}
+		if ctx.Mode == session.ModeUploadProtocol {
+			// One-keystroke menu — no buffering needed.
+			protocol.DispatchUploadProtocol(ctx, string(data), cfg, startUploadZ, startUploadK)
+			continue
+		}
+		if ctx.Mode == session.ModeEnterUploadName {
+			handleUploadNameInput(ctx, cfg, data, &inputBuffer, func(c *session.Context) {
+				// The receiver takes the conn for its own protocol reader,
+				// so pause our input goroutine for the duration (same
+				// pattern as the download dispatch).
+				stopReader()
+				runXmodemUpload(c, cfg)
+				startReader()
+			})
 			continue
 		}
 	}
@@ -325,7 +427,12 @@ func handleConnection(conn net.Conn, initialPath string, cfg *session.Config, re
 
 // handleNavigateInput accepts per-character keyboard input: digits,
 // backspace, newline to confirm the current number, R to refresh, X to exit.
-func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder) {
+//
+// confirmReady is invoked by SelectFile once a file body has been staged on
+// ctx; it either shows the protocol prompt or, with --onlyx/z/k, dispatches
+// the transfer immediately. uploadStart is invoked when the user presses
+// [P] and similarly either prompts or auto-dispatches.
+func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder, confirmReady func(*session.Context), uploadStart func(*session.Context)) {
 	input := string(data)
 	if input == "" {
 		return
@@ -357,6 +464,13 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 			_ = ctx.Writeln("")
 			_ = ctx.Write("Enter URL (empty=back): ")
 			return
+		case 'p':
+			if cfg.NoUpload {
+				return
+			}
+			buf.Reset()
+			uploadStart(ctx)
+			return
 		}
 	}
 	for _, r := range input {
@@ -365,9 +479,7 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 			numStr := buf.String()
 			buf.Reset()
 			n := atoiSafe(numStr)
-			navigator.SelectFile(ctx, n, cfg, func(c *session.Context) {
-				protocol.ShowProtocolPrompt(c)
-			})
+			navigator.SelectFile(ctx, n, cfg, confirmReady)
 			return
 		}
 		if buf.Len() > 0 && (r == '\b' || r == 0x7f) {
@@ -387,8 +499,9 @@ func handleNavigateInput(ctx *session.Context, cfg *session.Config, data []byte,
 // handleURLInput collects a URL one byte at a time. Enter submits; an empty
 // submission returns to the listing; otherwise we attempt the download and
 // on failure re-prompt from the same mode so the user can correct a typo
-// without having to walk out and back in.
-func handleURLInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder) {
+// without having to walk out and back in. confirmReady fires once the
+// fetched body has been staged — same semantics as in handleNavigateInput.
+func handleURLInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder, confirmReady func(*session.Context)) {
 	for _, b := range data {
 		if b == '\r' || b == '\n' {
 			_ = ctx.Writeln("")
@@ -413,7 +526,7 @@ func handleURLInput(ctx *session.Context, cfg *session.Config, data []byte, buf 
 			ctx.RequestedBody = body
 			ctx.Mode = session.ModeConfirmTransfer
 			navigator.AnnounceBuffered(ctx)
-			protocol.ShowProtocolPrompt(ctx)
+			confirmReady(ctx)
 			return
 		}
 		if (b == '\b' || b == 0x7f) && buf.Len() > 0 {
@@ -431,6 +544,99 @@ func handleURLInput(ctx *session.Context, cfg *session.Config, data []byte, buf 
 			_, _ = ctx.Conn.Write([]byte{b})
 		}
 	}
+}
+
+// handleUploadNameInput collects a destination filename one byte at a time
+// (XMODEM has no in-protocol filename, so the user types it). Empty Enter
+// cancels back to the listing; otherwise we stash the name on ctx and call
+// startTransfer, which is expected to pause the input reader, drive the
+// receiver, and resume the reader.
+func handleUploadNameInput(ctx *session.Context, cfg *session.Config, data []byte, buf *strings.Builder, startTransfer func(*session.Context)) {
+	for _, b := range data {
+		if b == '\r' || b == '\n' {
+			_ = ctx.Writeln("")
+			name := strings.TrimSpace(buf.String())
+			buf.Reset()
+			if name == "" {
+				navigator.ListFiles(ctx, cfg)
+				return
+			}
+			ctx.UploadName = name
+			startTransfer(ctx)
+			return
+		}
+		if (b == '\b' || b == 0x7f) && buf.Len() > 0 {
+			s := buf.String()
+			buf.Reset()
+			buf.WriteString(s[:len(s)-1])
+			_, _ = ctx.Conn.Write([]byte{'\b', ' ', '\b'})
+			continue
+		}
+		// Filenames: printable ASCII, no path separators (the navigator
+		// helper will also reject those — this is just early echo
+		// suppression so the user doesn't see what they can't submit).
+		if b >= 0x20 && b < 0x7f && b != '/' && b != '\\' {
+			buf.WriteByte(b)
+			_, _ = ctx.Conn.Write([]byte{b})
+		}
+	}
+}
+
+// runXmodemUpload drives one XMODEM receive: it owns the conn for the
+// duration (caller has paused the input reader), persists the file on
+// success, and prints the completion banner before returning to the
+// listing.
+func runXmodemUpload(ctx *session.Context, cfg *session.Config) {
+	name := ctx.UploadName
+	session.XmodemReceive(ctx, cfg, name, func(success bool, n string, body []byte, errMsg string) {
+		finishUpload(ctx, cfg, "XMODEM", n, body, success, errMsg)
+	})
+}
+
+// runZmodemUpload drives one ZMODEM receive. Same mechanics as
+// runXmodemUpload, but the destination filename comes from the ZFILE
+// frame rather than the user, so we read it back off the OnReceive
+// callback instead of stashing it on the context up front.
+func runZmodemUpload(ctx *session.Context, cfg *session.Config) {
+	session.ZmodemReceive(ctx, cfg, func(success bool, n string, body []byte, errMsg string) {
+		finishUpload(ctx, cfg, "ZMODEM", n, body, success, errMsg)
+	})
+}
+
+// runKermitUpload drives one Kermit receive. Filename is carried in the
+// F packet.
+func runKermitUpload(ctx *session.Context, cfg *session.Config) {
+	session.KermitReceive(ctx, cfg, func(success bool, n string, body []byte, errMsg string) {
+		finishUpload(ctx, cfg, "KERMIT", n, body, success, errMsg)
+	})
+}
+
+// finishUpload persists the received bytes (if the transfer succeeded) and
+// prints the completion banner. Shared across all three protocols so the
+// "validate name → write file → log → banner" sequence stays consistent.
+func finishUpload(ctx *session.Context, cfg *session.Config, proto, name string, body []byte, success bool, errMsg string) {
+	if !success {
+		protocol.ShowUploadComplete(ctx, cfg, proto, name, false, errMsg)
+		return
+	}
+	dest, err := navigator.WriteUploadedFile(ctx, cfg, name, body)
+	if err != nil {
+		logger.Error(fmt.Sprintf("upload write failed: %v", err))
+		protocol.ShowUploadComplete(ctx, cfg, proto, name, false, err.Error())
+		return
+	}
+	logger.Info(fmt.Sprintf("Uploaded %s (%d bytes) to %s via %s", name, len(body), dest, proto))
+	protocol.ShowUploadComplete(ctx, cfg, proto, name, true, "")
+}
+
+func boolCount(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
 }
 
 func atoiSafe(s string) int {

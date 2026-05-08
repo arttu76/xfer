@@ -279,12 +279,259 @@ func TestCrossLangGolden_EveryByte(t *testing.T) {
 	}
 }
 
+// --- Receive: CRC happy path -----------------------------------------------
+
+func TestReceiveCRCSingleBlock(t *testing.T) {
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 2 * time.Second})
+
+	cap.WaitFor(t, hasByte(xmodem.CRC), 2*time.Second)
+	mustWrite(t, client, buildCrcPacket(1, []byte("hello world!")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 1), 2*time.Second)
+
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 2), 2*time.Second)
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	if !bytes.Equal(res.data, []byte("hello world!")) {
+		t.Fatalf("payload mismatch: %q", res.data)
+	}
+}
+
+// --- Receive: SUB padding strip --------------------------------------------
+
+func TestReceiveStripsSUBPadding(t *testing.T) {
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 2 * time.Second})
+
+	cap.WaitFor(t, hasByte(xmodem.CRC), 2*time.Second)
+	// Five real bytes followed by 123 SUB bytes inside the 128-byte block.
+	mustWrite(t, client, buildCrcPacket(1, []byte("hello")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 1), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	if !bytes.Equal(res.data, []byte("hello")) {
+		t.Fatalf("expected SUB-stripped payload, got %x", res.data)
+	}
+}
+
+// --- Receive: multi-block --------------------------------------------------
+
+func TestReceiveMultiBlock(t *testing.T) {
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 3 * time.Second})
+
+	cap.WaitFor(t, hasByte(xmodem.CRC), 2*time.Second)
+
+	payload := make([]byte, 384)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	for blk := 1; blk <= 3; blk++ {
+		mustWrite(t, client, buildCrcPacket(byte(blk), payload[(blk-1)*128:blk*128]))
+		cap.WaitFor(t, countAtLeast(xmodem.ACK, blk), 2*time.Second)
+	}
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	if !bytes.Equal(res.data, payload) {
+		t.Fatalf("payload mismatch (len got=%d want=%d)", len(res.data), len(payload))
+	}
+}
+
+// --- Receive: bad-CRC retransmit -------------------------------------------
+
+func TestReceiveNAKsBadCRC(t *testing.T) {
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 2 * time.Second})
+
+	cap.WaitFor(t, hasByte(xmodem.CRC), 2*time.Second)
+
+	// Build a packet with the CRC corrupted.
+	good := buildCrcPacket(1, []byte("payload"))
+	bad := append([]byte(nil), good...)
+	bad[len(bad)-1] ^= 0xff
+	mustWrite(t, client, bad)
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 2*time.Second)
+
+	// Resend with the correct CRC — must be accepted.
+	mustWrite(t, client, good)
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 1), 2*time.Second)
+
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 2), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	if !bytes.Equal(res.data, []byte("payload")) {
+		t.Fatalf("got %q", res.data)
+	}
+}
+
+// --- Receive: duplicate retransmit (sender resends previous block) ---------
+
+func TestReceiveDuplicateBlockACKedNotStored(t *testing.T) {
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 2 * time.Second})
+
+	cap.WaitFor(t, hasByte(xmodem.CRC), 2*time.Second)
+
+	mustWrite(t, client, buildCrcPacket(1, []byte("aaa")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 1), 2*time.Second)
+	// Retransmit of block 1 (sender thinks ACK was lost). Must be ACKed
+	// without doubling the data.
+	mustWrite(t, client, buildCrcPacket(1, []byte("aaa")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 2), 2*time.Second)
+	mustWrite(t, client, buildCrcPacket(2, []byte("bbb")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 3), 2*time.Second)
+
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	want := append(append([]byte("aaa"), bytes.Repeat([]byte{xmodem.SUB}, 0)...), []byte("aaa")...)
+	_ = want
+	// Block 1 ("aaa" + 125 SUB) once + block 2 ("bbb" + 125 SUB), then SUB
+	// padding gets stripped from the tail. So we expect first block's full
+	// 128 bytes (real "aaa" + SUB padding intact, since trailing SUB strip
+	// only consumes the tail) followed by "bbb".
+	expected := make([]byte, 0, 128+3)
+	expected = append(expected, 'a', 'a', 'a')
+	for i := 0; i < 125; i++ {
+		expected = append(expected, xmodem.SUB)
+	}
+	expected = append(expected, 'b', 'b', 'b')
+	if !bytes.Equal(res.data, expected) {
+		t.Fatalf("payload mismatch:\nwant %x\ngot  %x", expected, res.data)
+	}
+}
+
+// --- Receive: checksum-mode fallback ---------------------------------------
+
+func TestReceiveChecksumModeFallback(t *testing.T) {
+	// Drain the initial CRC kicks for ~6 seconds without responding, so the
+	// receiver gives up and falls through to NAK (checksum). Then send a
+	// checksum-format packet.
+	server, client := testutil.Pair(t)
+	cap := testutil.Start(client)
+	resCh := runReceive(server, xmodem.Config{ReadTimeout: 5 * time.Second})
+
+	// Wait for the receiver to switch to NAK mode.
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 1), 12*time.Second)
+	mustWrite(t, client, buildChecksumPacket(1, []byte("ck")))
+	cap.WaitFor(t, countAtLeast(xmodem.ACK, 1), 2*time.Second)
+
+	mustWrite(t, client, []byte{xmodem.EOT})
+	cap.WaitFor(t, countAtLeast(xmodem.NAK, 2), 2*time.Second)
+	mustWrite(t, client, []byte{xmodem.EOT})
+
+	res := <-resCh
+	if res.err != nil {
+		t.Fatalf("Receive: %v", res.err)
+	}
+	if !bytes.Equal(res.data, []byte("ck")) {
+		t.Fatalf("got %q", res.data)
+	}
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 func mustWrite(t *testing.T, w io.Writer, b []byte) {
 	t.Helper()
 	if _, err := w.Write(b); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+type recvResult struct {
+	data []byte
+	err  error
+}
+
+func runReceive(server net.Conn, cfg xmodem.Config) <-chan recvResult {
+	ch := make(chan recvResult, 1)
+	go func() {
+		d, err := xmodem.Receive(server, cfg)
+		ch <- recvResult{d, err}
+	}()
+	return ch
+}
+
+func buildCrcPacket(blk byte, data []byte) []byte {
+	chunk := make([]byte, 128)
+	n := copy(chunk, data)
+	for i := n; i < 128; i++ {
+		chunk[i] = xmodem.SUB
+	}
+	out := []byte{xmodem.SOH, blk, ^blk}
+	out = append(out, chunk...)
+	c := xmodem.CRC16Ccitt(chunk)
+	return append(out, byte(c>>8), byte(c&0xff))
+}
+
+func buildChecksumPacket(blk byte, data []byte) []byte {
+	chunk := make([]byte, 128)
+	n := copy(chunk, data)
+	for i := n; i < 128; i++ {
+		chunk[i] = xmodem.SUB
+	}
+	out := []byte{xmodem.SOH, blk, ^blk}
+	out = append(out, chunk...)
+	var sum byte
+	for _, b := range chunk {
+		sum += b
+	}
+	return append(out, sum)
+}
+
+func hasByte(target byte) func([]byte) bool {
+	return func(b []byte) bool {
+		for _, x := range b {
+			if x == target {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func countAtLeast(target byte, n int) func([]byte) bool {
+	return func(b []byte) bool {
+		c := 0
+		for _, x := range b {
+			if x == target {
+				c++
+			}
+		}
+		return c >= n
 	}
 }
 

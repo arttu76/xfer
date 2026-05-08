@@ -15,7 +15,8 @@ XFER is that something. Run it on your modern computer, then from the old machin
 - File transfer using classic Kermit protocol (for clients that only have Kermit — e.g. some CP/M and mainframe terminals)
 - Built-in file viewer: inspect files on the host without downloading first (text or hex dump, scroll, search, adjustable terminal size)
 - Auto-detects the connected terminal's size on connect (ANSI cursor-position probe) so the viewer and directory listing lay out correctly without manual configuration; falls back gracefully on terminals that don't answer
-- Paginated directory browsing with `[M]ore` / `[S]earch`: large directories don't scroll off the screen, and the search filter narrows a long listing to just the files whose names match a substring (case-insensitive)
+- Paginated directory browsing with `[M]ore` / `[S]earch`: large directories don't scroll off the screen, the mid-page prompt offers the full menu (number / URL / upload / refresh / exit) so you can act without paging to the end, and the search filter narrows a long listing to just the files whose names match a substring (case-insensitive)
+- Client-to-host uploads via `[P]ut` (XMODEM / ZMODEM / Kermit) — the client sends a file *up* to the directory it is currently browsing
 - Download a file directly from a URL: the server fetches it (http/https) straight into memory and streams it to the old computer, no scratch file on disk
 - Paste long URLs into the server's own keyboard instead of typing them on the old terminal; both sides can type, first Enter wins (opt out with `--no-stdin-url`)
 - Tuned for the old terminal programs of the era (CRC16, 1 KB subpackets, 8 KB
@@ -36,7 +37,7 @@ When running xfer, you probably don't need to change any options, but you can us
 
 ```
 $ xfer -h
-xfer v1.2.2 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
+xfer v1.3.0 — XMODEM / ZMODEM / Kermit file server + viewer for old computers
 
 Usage: xfer [flags]
 
@@ -44,6 +45,8 @@ Usage: xfer [flags]
   -d, --directory <string>  directory to serve (default: current directory)
   -s, --secure              secure mode: don't allow user to change directories
   -n, --no-url              disallow the [U]RL download option in the file listing
+      --no-upload           disallow the [P]ut upload option in the file listing
+                            (implied by --secure)
   -c, --no-stdin-url        do not inject stdin lines into a client's URL prompt
   -w, --wirelog <path>      hexdump every wire byte to file ("-" for stderr)
       --term-width <n>      default/fallback terminal width (default: 40)
@@ -76,7 +79,7 @@ Terminal size: 80x25
 2 ... paradroid.prg
 3 ... mule.prg
 4 ... wizball.prg
-1-4, [U]RL, [S]earch, [R]efresh, e[X]it: 3
+1-4, [U]RL, [P]ut, [S]earch, [R]efresh, e[X]it: 3
 Ready to download mule.prg
 Size: 48829 bytes
 MD5:  9a982e21160b982a02fd43412f14e127
@@ -123,12 +126,15 @@ than two seconds.
 ### Listing big directories
 
 When a directory has more files than fit on one screen the listing
-pauses with `[M]ore, [S]earch:` after each page. Press `M` to keep
-paging, or `S` to filter — type a substring and the listing redraws as
-just the files whose names match (case-insensitive), preserving the
-original entry numbers so the digit you type at the menu still picks
-the right file. From the final menu prompt `S` triggers the same
-search; pressing Enter on an empty term takes you back to the unfiltered
+pauses after each page with the same menu shown at the end of a
+listing — `1-N, [M]ore, [U]RL, [P]ut, [S]earch, [R]efresh, e[X]it:` —
+so you don't have to page to the bottom before picking a file or
+jumping to URL/upload/refresh/exit. Press `M` to keep paging, or `S`
+to filter — type a substring and the listing redraws as just the
+files whose names match (case-insensitive), preserving the original
+entry numbers so the digit you type at the menu still picks the right
+file. From the final menu prompt `S` triggers the same search;
+pressing Enter on an empty term takes you back to the unfiltered
 listing.
 
 ### Downloading from a URL
@@ -142,6 +148,29 @@ failed fetch (bad host, 404, etc.) re-prompts for the URL so you can
 correct a typo.
 
 Disable this feature with `-n` / `--no-url` (see Security Notes below).
+
+### Uploading a file from the client
+
+Press **P** at the listing to send a file from the client *up* to the
+host. xfer asks which protocol the client will use and the host receives
+the file into the directory you're currently browsing. **XMODEM**,
+**ZMODEM**, and **Kermit** are all supported on the upload side.
+
+Notes:
+
+- ZMODEM and Kermit carry the filename in-protocol, so xfer takes
+  whatever name the client sends. XMODEM has no filename field, so for
+  XMODEM uploads xfer prompts for one before the transfer starts. Path
+  separators (`/`, `\`) are rejected on every protocol — the upload
+  always lands in the current directory.
+- Refuses to overwrite. If the name already exists you'll see an error
+  and be returned to the listing; pick a different name and try again.
+- XMODEM also has no length field, so the standard convention is used:
+  trailing 0x1A (Ctrl-Z) padding bytes are stripped from the last
+  block. Binary files that genuinely end in 0x1A will be truncated.
+- Disable uploads with `--no-upload`. `--secure` also implies
+  `--no-upload` since a host that has locked navigation also shouldn't
+  accept inbound files into the served tree.
 
 **Type the URL on whichever keyboard is convenient.** Long URLs are
 miserable to type on a retro keyboard, so once the URL prompt is up you
@@ -196,7 +225,7 @@ The project is written in Go and uses a modular architecture:
 - `internal/viewer/` — inline text/hex file viewer (scroll, search, resize)
 - `internal/urlfetch/` — http/https downloader used by the `U=url` option
 - `internal/urlconsole/` — registry + stdin reader for server-side URL paste
-- `internal/xmodem/` — XMODEM sender (CRC-16 + checksum, NAK retransmit, EOT)
+- `internal/xmodem/` — XMODEM sender + receiver (CRC-16 + checksum, NAK retransmit, EOT)
 - `internal/zmodem/` — ZMODEM sender tuned for old-terminal compatibility
   (CRC-16 only, 1 KB subpackets, 8 KB frames, ESCCTL negotiation, lrzsz
   fileinfo, `rz\r` trigger, 5×CAN cancel)
@@ -242,6 +271,11 @@ lrzsz fileinfo format, XMODEM CRC / checksum modes and block wrap past
 - Use the `-s` (secure) flag to restrict users to the initial directory
 - All transfers and the viewer read the file into memory and stream from
   the buffer — no temporary files are written to disk
+- The upload feature (`P` at the listing) writes a file the *client* sends
+  into the directory the client is currently browsing. Existing files are
+  never overwritten — collisions are refused and the user is asked to pick
+  a different name. Disable uploads with `--no-upload`; `--secure` already
+  implies it.
 - The URL download feature (`U` at the listing) makes the *server* perform
   the HTTP request on its own network. A connected client can therefore ask
   xfer to fetch any URL the host itself can reach — including machines on

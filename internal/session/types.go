@@ -13,6 +13,8 @@ const (
 	ModeTransferFile
 	ModeView
 	ModeEnterURL
+	ModeUploadProtocol  // user picked [P]ut, choosing protocol
+	ModeEnterUploadName // XMODEM upload: collecting destination filename
 )
 
 type Context struct {
@@ -51,11 +53,17 @@ type Context struct {
 	// directory-listing pager so it can resume across reads while the user
 	// answers "[M]ore, [S]earch". The session package never inspects it.
 	NavState any
+
+	// UploadName is the destination filename collected from the user during
+	// an XMODEM upload (the protocol carries no filename of its own). Cleared
+	// each time the navigator returns to the listing.
+	UploadName string
 }
 
 type Config struct {
 	SecureMode bool
 	NoURL      bool
+	NoUpload   bool
 
 	// TermDetect enables the connect-time ANSI cursor-position probe. When
 	// false, TermWidth/TermHeight are used directly with no probe and no
@@ -70,6 +78,13 @@ type Config struct {
 	// TermDetectTimeout bounds how long DetectTerminalSize waits for the
 	// terminal's reply. Zero falls back to DefaultDetectTimeout.
 	TermDetectTimeout time.Duration
+
+	// ForcedProtocol pins every transfer to one wire protocol and bypasses
+	// the protocol-selection prompt in both directions. Zero means no
+	// forcing (normal prompt). Valid non-zero values are 'x', 'z', 'k'.
+	// When set, the [V]iew option is unreachable since it lived only on
+	// the confirm prompt that we now skip.
+	ForcedProtocol byte
 }
 
 // Write/Writeln send text to the client terminal. Writeln appends CRLF since

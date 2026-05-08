@@ -47,6 +47,177 @@ type Config struct {
 	OnStart     func()            // called after CRC/NAK received (may be nil)
 }
 
+// Receive runs the XMODEM receiver state machine on conn until the sender
+// signals EOT or cancels. Returns the assembled payload with trailing 0x1A
+// (SUB) padding stripped — XMODEM has no length field, so we apply the
+// usual convention. Binary files that genuinely end in 0x1A will be
+// truncated; that's a fundamental limitation of plain XMODEM.
+//
+// The caller must own conn for the duration of the call (same constraint
+// as Send) — the receiver drives ReadDeadline.
+func Receive(conn deadlineConn, cfg Config) ([]byte, error) {
+	if cfg.ReadTimeout == 0 {
+		cfg.ReadTimeout = 10 * time.Second
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	m, first, err := negotiateReceive(conn)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.OnStart != nil {
+		cfg.OnStart()
+	}
+
+	ckBytes := 2
+	if m == modeChecksum {
+		ckBytes = 1
+	}
+	pkt := make([]byte, 1+1+1+BlockSize+ckBytes)
+
+	var out []byte
+	expected := byte(1)
+	timeouts := 0
+	pending := first // first byte already read by negotiateReceive
+
+	for {
+		var hdr byte
+		if pending != 0 {
+			hdr = pending
+			pending = 0
+		} else {
+			hdr, err = readOne(conn, cfg.ReadTimeout)
+			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					timeouts++
+					if timeouts >= maxTimeoutsInARow {
+						return nil, errors.New("XMODEM: sender stopped responding")
+					}
+					_, _ = conn.Write([]byte{NAK})
+					continue
+				}
+				return nil, err
+			}
+		}
+		timeouts = 0
+
+		switch hdr & 0x7f {
+		case EOT:
+			// EOT handshake: NAK the first one (forces the sender to repeat
+			// it, defending against a stray EOT byte mid-data), ACK the
+			// second. Mirror of finishEOT on the send side.
+			if _, err := conn.Write([]byte{NAK}); err != nil {
+				return nil, err
+			}
+			second, err := readOne(conn, cfg.ReadTimeout)
+			if err != nil {
+				return nil, err
+			}
+			if (second & 0x7f) != EOT {
+				return nil, fmt.Errorf("XMODEM: expected second EOT, got %02x", second)
+			}
+			if _, err := conn.Write([]byte{ACK}); err != nil {
+				return nil, err
+			}
+			for len(out) > 0 && out[len(out)-1] == SUB {
+				out = out[:len(out)-1]
+			}
+			return out, nil
+
+		case CAN:
+			return nil, errors.New("XMODEM: sender cancelled")
+
+		case SOH:
+			pkt[0] = SOH
+			if err := readExact(conn, pkt[1:], cfg.ReadTimeout); err != nil {
+				return nil, err
+			}
+			blockNum := pkt[1]
+			blockComp := pkt[2]
+			data := pkt[3 : 3+BlockSize]
+
+			if blockNum^blockComp != 0xff {
+				_, _ = conn.Write([]byte{NAK})
+				continue
+			}
+			if m == modeCrc {
+				gotCrc := uint16(pkt[3+BlockSize])<<8 | uint16(pkt[3+BlockSize+1])
+				if gotCrc != CRC16Ccitt(data) {
+					_, _ = conn.Write([]byte{NAK})
+					continue
+				}
+			} else {
+				if pkt[3+BlockSize] != checksum(data) {
+					_, _ = conn.Write([]byte{NAK})
+					continue
+				}
+			}
+
+			// Duplicate retransmit of the previous block: ACK without
+			// re-appending. Guard with len(out) > 0 so a stray block 0 on
+			// the very first packet doesn't masquerade as a duplicate of
+			// nothing.
+			if blockNum == byte(expected-1) && len(out) > 0 {
+				_, _ = conn.Write([]byte{ACK})
+				continue
+			}
+			if blockNum != expected {
+				return nil, fmt.Errorf("XMODEM: out-of-sequence block %d (expected %d)", blockNum, expected)
+			}
+
+			out = append(out, data...)
+			if _, err := conn.Write([]byte{ACK}); err != nil {
+				return nil, err
+			}
+			if cfg.OnStatus != nil {
+				// TotalBlocks is unknown to the receiver — XMODEM has no
+				// announced length. Caller-facing progress UIs should
+				// surface BytesReceived (== Block * BlockSize) instead.
+				cfg.OnStatus(StatusEvent{Block: int(blockNum), TotalBlocks: 0})
+			}
+			expected++
+
+		default:
+			// Stray noise byte — nudge with NAK and keep waiting.
+			_, _ = conn.Write([]byte{NAK})
+		}
+	}
+}
+
+// negotiateReceive emits 'C' (CRC) for up to 6 one-second rounds; if no byte
+// arrives, falls back to NAK (checksum) for another 6 rounds. Returns the
+// negotiated mode and the first byte of the sender's response (which is
+// almost always SOH but the loop handles other cases too).
+func negotiateReceive(conn deadlineConn) (mode, byte, error) {
+	const perAttempt = 1 * time.Second
+	const attempts = 6
+	for _, kick := range []struct {
+		b byte
+		m mode
+	}{{CRC, modeCrc}, {NAK, modeChecksum}} {
+		for tries := 0; tries < attempts; tries++ {
+			if _, err := conn.Write([]byte{kick.b}); err != nil {
+				return 0, 0, err
+			}
+			b, err := readOne(conn, perAttempt)
+			if err == nil {
+				return kick.m, b, nil
+			}
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				return 0, 0, err
+			}
+		}
+	}
+	return 0, 0, errors.New("XMODEM: sender never sent SOH")
+}
+
+// readExact fills buf, applying timeout to the whole read.
+func readExact(conn deadlineConn, buf []byte, timeout time.Duration) error {
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	_, err := io.ReadFull(conn, buf)
+	return err
+}
+
 // Send transfers `data` via XMODEM over conn. The caller is responsible for
 // reading from the connection only through this function for the duration of
 // the transfer (we ReadDeadline-drive the session).

@@ -565,10 +565,12 @@ func newReader(conn net.Conn) *reader {
 	return r
 }
 
-// readBufLimit caps the pending-byte buffer so a misbehaving or stalled peer
-// can't grow our memory use unbounded. 4 KB is far more than any valid ZMODEM
-// handshake — headers are < 30 bytes each.
-const readBufLimit = 4096
+// We deliberately don't cap the pending-byte buffer here. Capping at any
+// fixed size means losing bytes when a real-world sender outruns our
+// per-byte read loop on a fast TCP link, and that breaks the subpacket
+// CRC. TCP's own receive window already backpressures the peer, and the
+// activity timeout bounds how long we'll wait, so an unbounded slice
+// here grows at most to a few times the kernel's recv buffer.
 
 func (r *reader) loop() {
 	defer close(r.done)
@@ -589,9 +591,6 @@ func (r *reader) loop() {
 			}
 			r.mu.Lock()
 			r.buf = append(r.buf, buf[:n]...)
-			if len(r.buf) > readBufLimit {
-				r.buf = r.buf[len(r.buf)-readBufLimit:]
-			}
 			r.cond.Broadcast()
 			r.mu.Unlock()
 		}

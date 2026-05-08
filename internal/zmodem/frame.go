@@ -7,6 +7,8 @@
 // Protocol" (1988).
 package zmodem
 
+import "hash/crc32"
+
 // Protocol bytes.
 const (
 	ZPAD = 0x2a // '*'
@@ -137,6 +139,14 @@ func CRC16(data []byte) uint16 {
 	return crc
 }
 
+// CRC32 is the IEEE/Ethernet CRC (poly 0xEDB88320 reflected, init/final XOR
+// 0xFFFFFFFF) used for ZBIN32 frames and CRC32 subpackets. ZMODEM transmits
+// CRC32 bytes little-endian — the high-level helpers in this file pack and
+// unpack accordingly.
+func CRC32(data []byte) uint32 {
+	return crc32.ChecksumIEEE(data)
+}
+
 // BuildZbinHeader emits a ZBIN (CRC16) header: ZPAD ZDLE 'A' + escaped
 // 5-byte payload + escaped CRC16 (big-endian).
 func BuildZbinHeader(frame byte, count uint32) []byte {
@@ -151,6 +161,28 @@ func BuildZbinHeader(frame byte, count uint32) []byte {
 	out = AppendEscaped(out, payload)
 	crc := CRC16(payload)
 	out = AppendEscaped(out, []byte{byte(crc >> 8), byte(crc)})
+	return out
+}
+
+// BuildZbin32Header emits a ZBIN32 (CRC32) header: ZPAD ZDLE 'C' + escaped
+// 5-byte payload + escaped CRC32 (little-endian, lsb first).
+func BuildZbin32Header(frame byte, count uint32) []byte {
+	out := []byte{ZPAD, ZDLE, ZBIN32}
+	payload := []byte{
+		frame,
+		byte(count),
+		byte(count >> 8),
+		byte(count >> 16),
+		byte(count >> 24),
+	}
+	out = AppendEscaped(out, payload)
+	crc := CRC32(payload)
+	out = AppendEscaped(out, []byte{
+		byte(crc),
+		byte(crc >> 8),
+		byte(crc >> 16),
+		byte(crc >> 24),
+	})
 	return out
 }
 

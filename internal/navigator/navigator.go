@@ -145,6 +145,7 @@ func ListFiles(ctx *session.Context, cfg *session.Config) {
 	ctx.RequestedName = ""
 	ctx.RequestedBody = nil
 	ctx.NavState = nil
+	ctx.UploadName = ""
 
 	_ = ctx.Writeln(fmt.Sprintf("----- %s -----", ctx.Path))
 	all := GetEntries(ctx, cfg)
@@ -231,7 +232,7 @@ func renderNextPage(ctx *session.Context, cfg *session.Config, p *PagerState) {
 	p.next = end
 	if p.next < len(p.items) {
 		p.phase = pagerMore
-		_ = ctx.Write("[M]ore, [S]earch: ")
+		_ = ctx.Write(buildMenuPrompt(cfg, p, true))
 		return
 	}
 	finalPrompt(ctx, cfg, p)
@@ -240,9 +241,23 @@ func renderNextPage(ctx *session.Context, cfg *session.Config, p *PagerState) {
 func finalPrompt(ctx *session.Context, cfg *session.Config, p *PagerState) {
 	p.phase = pagerInactive
 	ctx.NavState = nil
+	_ = ctx.Write(buildMenuPrompt(cfg, p, false))
+}
+
+// buildMenuPrompt renders the menu prompt shown after a listing slice. When
+// includeMore is true the prompt is the mid-page variant (still entries to
+// show) and offers [M]ore in addition to the regular menu choices, so the
+// user can select a numbered entry / jump to URL / upload / exit without
+// having to page through the rest of the listing first. Otherwise it is
+// the final prompt shown once the listing is fully drawn.
+func buildMenuPrompt(cfg *session.Config, p *PagerState, includeMore bool) string {
 	urlHint := ""
 	if !cfg.NoURL {
 		urlHint = "[U]RL, "
+	}
+	uploadHint := ""
+	if !cfg.NoUpload {
+		uploadHint = "[P]ut, "
 	}
 	var head string
 	switch {
@@ -254,7 +269,11 @@ func finalPrompt(ctx *session.Context, cfg *session.Config, p *PagerState) {
 		// (the displayed numbers preserve original positions).
 		head = fmt.Sprintf("1-%d, ", p.totalEntries)
 	}
-	_ = ctx.Write(fmt.Sprintf("%s%s[S]earch, [R]efresh, e[X]it: ", head, urlHint))
+	moreHint := ""
+	if includeMore {
+		moreHint = "[M]ore, "
+	}
+	return fmt.Sprintf("%s%s%s%s[S]earch, [R]efresh, e[X]it: ", head, moreHint, urlHint, uploadHint)
 }
 
 // BeginSearch starts a search-term collection from the final menu prompt.
@@ -274,43 +293,95 @@ func BeginSearch(ctx *session.Context, cfg *session.Config) {
 // "[M]ore, [S]earch" prompt or collecting a search term. The main input
 // loop calls this whenever PagerActive(ctx) is true so that digits/letters
 // destined for the pager don't get misinterpreted as menu picks.
-func HandlePagerInput(ctx *session.Context, cfg *session.Config, data []byte) {
+//
+// Returns any bytes that were not consumed by the pager — when the user
+// presses a final-menu shortcut (digit / U / P / R / X) at the [M]ore
+// prompt the pager deactivates and yields that byte (and any bytes still
+// queued behind it in the same read) back to the caller so the regular
+// navigate handler can act on them.
+func HandlePagerInput(ctx *session.Context, cfg *session.Config, data []byte) []byte {
 	p, ok := ctx.NavState.(*PagerState)
 	if !ok || p == nil {
-		return
+		return nil
 	}
-	for _, b := range data {
+	for i, b := range data {
 		switch p.phase {
 		case pagerMore:
-			handleMoreByte(ctx, cfg, p, b)
+			if !handleMoreByte(ctx, cfg, p, b) {
+				// Byte wasn't a pager command — pager has deactivated and
+				// the caller should re-dispatch this byte (and the rest)
+				// to the normal navigate handler.
+				return data[i:]
+			}
 		case pagerSearch:
 			handleSearchByte(ctx, cfg, p, b)
 		default:
-			return
+			return data[i:]
 		}
 		// handleSearchByte may swap in a new pager (filtered listing) or
 		// finish the listing entirely. Stop iterating bytes the moment
 		// the current pager is no longer the active state, so we don't
 		// touch a stale struct or feed input meant for the next prompt.
 		if cur, _ := ctx.NavState.(*PagerState); cur != p {
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
-func handleMoreByte(ctx *session.Context, cfg *session.Config, p *PagerState, b byte) {
+// handleMoreByte interprets one byte at the [M]ore prompt. Returns true
+// when the byte was a pager command (M/S, plus stray bytes the pager
+// silently swallows). Returns false when the byte is a final-menu
+// shortcut — in that case the pager has been deactivated and the caller
+// must re-dispatch the byte through the normal navigate handler so the
+// user can type a number / U / P / R / X without having to page to the
+// end of the listing first.
+func handleMoreByte(ctx *session.Context, cfg *session.Config, p *PagerState, b byte) bool {
 	switch b {
 	case 'M', 'm':
 		_, _ = ctx.Conn.Write([]byte{b, '\r', '\n'})
 		renderNextPage(ctx, cfg, p)
+		return true
 	case 'S', 's':
 		_, _ = ctx.Conn.Write([]byte{b, '\r', '\n'})
 		p.phase = pagerSearch
 		p.searchBuf.Reset()
 		_ = ctx.Write("Search (empty=continue): ")
+		return true
+	}
+	if isFinalMenuShortcut(b, cfg) {
+		// Tear down the pager and let the caller re-route the byte to
+		// the regular navigate handler. We deliberately don't echo here
+		// — the navigate handler echoes digits / writes its own newline
+		// for letter shortcuts.
+		_ = ctx.Writeln("")
+		p.phase = pagerInactive
+		ctx.NavState = nil
+		return false
 	}
 	// Anything else: ignore. Old terminals send stray escape bytes,
 	// XON/XOFF, etc., that shouldn't move the listing forward.
+	return true
+}
+
+// isFinalMenuShortcut reports whether b matches one of the final-menu
+// keys that should be honored mid-listing: a digit (start a numbered
+// selection), U (URL prompt), P (upload), R (refresh), X (exit). U and P
+// are gated by the same cfg flags that hide them from the prompt — so a
+// user who can't see the option also can't trigger it from the pager.
+func isFinalMenuShortcut(b byte, cfg *session.Config) bool {
+	if b >= '0' && b <= '9' {
+		return true
+	}
+	switch b {
+	case 'X', 'x', 'R', 'r':
+		return true
+	case 'U', 'u':
+		return !cfg.NoURL
+	case 'P', 'p':
+		return !cfg.NoUpload
+	}
+	return false
 }
 
 func handleSearchByte(ctx *session.Context, cfg *session.Config, p *PagerState, b byte) {
@@ -394,6 +465,43 @@ func SelectFile(ctx *session.Context, n int, cfg *session.Config, onSelected fun
 	if onSelected != nil {
 		onSelected(ctx)
 	}
+}
+
+// WriteUploadedFile writes `body` to ctx.Path/name. It enforces the
+// same path-traversal guard as GetAbsoluteFilePath (so a malicious or
+// XMODEM-typed name can't escape the served tree) and refuses to
+// overwrite an existing file — the user must pick a different name.
+//
+// Returns the absolute destination path on success.
+func WriteUploadedFile(ctx *session.Context, cfg *session.Config, name string, body []byte) (string, error) {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return "", errors.New("empty filename")
+	}
+	// Reject anything that smells like a path: the upload UX is "drop a
+	// file in this directory", not "place a file anywhere reachable".
+	// Both separators rejected so a Windows-style name from XMODEM can't
+	// sneak through on Unix.
+	if strings.ContainsAny(clean, "/\\") {
+		return "", errors.New("filename must not contain path separators")
+	}
+	if clean == "." || clean == ".." {
+		return "", errors.New("invalid filename")
+	}
+
+	abs, err := GetAbsoluteFilePath(ctx, clean, cfg)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err == nil {
+		return "", fmt.Errorf("file %q already exists", clean)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.WriteFile(abs, body, 0644); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func isRoot(path string) bool { return filepath.Dir(path) == path }
