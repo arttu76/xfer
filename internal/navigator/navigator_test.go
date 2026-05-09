@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/session"
+	"github.com/arttu76/xfer/internal/session"
 )
 
 // newCtx builds a minimal Context rooted at dir. No net.Conn — these tests

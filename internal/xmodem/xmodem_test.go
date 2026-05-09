@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/testutil"
-	"github.com/solvalou/xfer/internal/xmodem"
+	"github.com/arttu76/xfer/internal/testutil"
+	"github.com/arttu76/xfer/internal/xmodem"
 )
 
 // runSend starts xmodem.Send in a goroutine and returns a channel for the

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/testutil"
-	"github.com/solvalou/xfer/internal/zmodem"
+	"github.com/arttu76/xfer/internal/testutil"
+	"github.com/arttu76/xfer/internal/zmodem"
 )
 
 // runSend spawns SendBuffer in a goroutine. Returns a channel for the error.

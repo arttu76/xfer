@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/solvalou/xfer/internal/constants"
-	"github.com/solvalou/xfer/internal/logger"
-	"github.com/solvalou/xfer/internal/session"
+	"github.com/arttu76/xfer/internal/constants"
+	"github.com/arttu76/xfer/internal/logger"
+	"github.com/arttu76/xfer/internal/session"
 )
 
 // Entry is one item in a directory listing: just enough to render the menu

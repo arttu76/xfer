@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/constants"
+	"github.com/arttu76/xfer/internal/constants"
 )
 
 // testDetectTimeout is the wall-clock deadline tests give DetectTerminalSize.

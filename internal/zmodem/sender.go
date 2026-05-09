@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/solvalou/xfer/internal/logger"
+	"github.com/arttu76/xfer/internal/logger"
 )
 
 const (

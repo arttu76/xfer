@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/testutil"
-	"github.com/solvalou/xfer/internal/zmodem"
+	"github.com/arttu76/xfer/internal/testutil"
+	"github.com/arttu76/xfer/internal/zmodem"
 )
 
 // These tests load the committed goldens from testdata/ and verify that

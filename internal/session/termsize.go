@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/solvalou/xfer/internal/constants"
+	"github.com/arttu76/xfer/internal/constants"
 )
 
 // detectReplyRegex matches the standard CSI cursor-position report:

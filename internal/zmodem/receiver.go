@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/solvalou/xfer/internal/logger"
+	"github.com/arttu76/xfer/internal/logger"
 )
 
 // receiveTimeout caps how long we wait between bytes from the sender. Matches

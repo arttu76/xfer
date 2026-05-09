@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/solvalou/xfer/internal/kermit"
-	"github.com/solvalou/xfer/internal/logger"
-	"github.com/solvalou/xfer/internal/xmodem"
-	"github.com/solvalou/xfer/internal/zmodem"
+	"github.com/arttu76/xfer/internal/kermit"
+	"github.com/arttu76/xfer/internal/logger"
+	"github.com/arttu76/xfer/internal/xmodem"
+	"github.com/arttu76/xfer/internal/zmodem"
 )
 
 // Note: we can't import navigator or protocol here because they import

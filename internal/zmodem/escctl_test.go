@@ -3,7 +3,7 @@ package zmodem_test
 import (
 	"testing"
 
-	"github.com/solvalou/xfer/internal/zmodem"
+	"github.com/arttu76/xfer/internal/zmodem"
 )
 
 func TestEscctlSniff_TooShort(t *testing.T) {

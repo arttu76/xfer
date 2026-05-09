@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/solvalou/xfer/internal/logger"
-	"github.com/solvalou/xfer/internal/navigator"
-	"github.com/solvalou/xfer/internal/session"
+	"github.com/arttu76/xfer/internal/logger"
+	"github.com/arttu76/xfer/internal/navigator"
+	"github.com/arttu76/xfer/internal/session"
 )
 
 type DisplayMode int

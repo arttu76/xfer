@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/testutil"
+	"github.com/arttu76/xfer/internal/testutil"
 )
 
 func TestSendReceiveProductionLoopback(t *testing.T) {

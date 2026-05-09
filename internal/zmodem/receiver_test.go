@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solvalou/xfer/internal/testutil"
+	"github.com/arttu76/xfer/internal/testutil"
 )
 
 // TestSendReceiveLoopback exercises the production ZMODEM Send → Receive
